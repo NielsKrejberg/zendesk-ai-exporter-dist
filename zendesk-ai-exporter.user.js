@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Exporter
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.2.1
+// @version      0.2.2
 // @description  Export Zendesk tickets into AI-friendly datasets.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -342,29 +342,28 @@
 
     async function searchExportTickets(query, exactGroupId, exactGroupName) {
         const tickets = [];
-        const seen = new Set();
+        const seenTicketIds = new Set();
+        const seenCursors = new Set();
         let afterCursor = null;
         let page = 0;
 
-        do {
-            if (state.cancelled) break;
+        while (!state.cancelled) {
             page += 1;
 
             const params = new URLSearchParams();
             params.set('query', query);
             params.set('filter[type]', 'ticket');
-            params.set('page[size]', '1000');
+            params.set('page[size]', '100');
             if (afterCursor) params.set('page[after]', afterCursor);
 
             const data = await apiGet(`/api/v2/search/export.json?${params.toString()}`);
-            const results = data.results || [];
+            const results = Array.isArray(data.results) ? data.results : [];
 
             for (const ticket of results) {
                 if (state.cancelled) break;
                 if (exactGroupId && Number(ticket.group_id) !== Number(exactGroupId)) continue;
-                if (seen.has(ticket.id)) continue;
-
-                seen.add(ticket.id);
+                if (seenTicketIds.has(ticket.id)) continue;
+                seenTicketIds.add(ticket.id);
                 tickets.push(normalizeSearchTicket(ticket, exactGroupName));
             }
 
@@ -373,17 +372,29 @@
 
             const meta = data.meta || {};
             const links = data.links || {};
-            afterCursor = meta.after_cursor || meta.after || null;
+            const hasMore = meta.has_more === true || meta.has_more === 'true' || meta.has_more === 1 || meta.has_more === '1';
+            if (!hasMore) break;
 
-            if (!afterCursor && links.next) {
+            let nextCursor = meta.after_cursor || meta.after || null;
+            if (!nextCursor && links.next) {
                 try {
                     const nextUrl = new URL(links.next, location.origin);
-                    afterCursor = nextUrl.searchParams.get('page[after]');
+                    nextCursor = nextUrl.searchParams.get('page[after]');
                 } catch (_) {}
             }
 
-            if (!meta.has_more && !links.next) break;
-        } while (afterCursor && !state.cancelled);
+            if (!nextCursor) {
+                console.warn('[Zendesk AI Exporter] Zendesk reported more results but returned no next cursor. Stopping pagination.');
+                break;
+            }
+            if (nextCursor === afterCursor || seenCursors.has(nextCursor)) {
+                console.warn('[Zendesk AI Exporter] Repeated pagination cursor detected. Stopping to prevent an infinite loop.', nextCursor);
+                break;
+            }
+
+            seenCursors.add(nextCursor);
+            afterCursor = nextCursor;
+        }
 
         return tickets;
     }
@@ -428,7 +439,6 @@
             } catch (_) {}
             throw new Error(`Zendesk API returned ${response.status}${detail ? `: ${detail}` : ''}`);
         }
-
         return response.json();
     }
 
@@ -459,7 +469,6 @@
                 updateSelectionUi();
             });
         });
-
         updateSelectionUi();
     }
 
