@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Exporter
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.2.2
+// @version      0.3.0
 // @description  Export Zendesk tickets into AI-friendly datasets.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -19,7 +19,6 @@
     if (document.getElementById(APP_ID)) return;
 
     const state = {
-        mode: 'helpdesk-web',
         tickets: [],
         selectedTicketIds: new Set(),
         running: false,
@@ -56,6 +55,7 @@
             flex: 0 0 auto;
         }
         #${APP_ID} .zae-title { font-size: 15px; font-weight: 650; }
+        #${APP_ID} .zae-subtitle { margin-top: 2px; color: rgba(255,255,255,.60); font-size: 12px; }
         #${APP_ID} .zae-close,
         #${APP_ID} button {
             border: 1px solid rgba(255, 255, 255, 0.14);
@@ -69,15 +69,13 @@
         #${APP_ID} button:disabled { opacity: .42; cursor: default; }
         #${APP_ID} .zae-close { padding: 4px 8px; }
         #${APP_ID} .zae-body {
-            height: calc(100% - 54px);
+            height: calc(100% - 58px);
             padding: 14px 16px 16px;
             overflow: hidden;
             display: flex;
             flex-direction: column;
         }
-        #${APP_ID} .zae-tabs { display: flex; gap: 8px; margin-bottom: 14px; flex: 0 0 auto; }
-        #${APP_ID} .zae-mode { flex: 0 0 auto; min-height: max-content; }
-        #${APP_ID} .zae-tab.is-active { background: rgba(117, 190, 139, 0.24); border-color: rgba(155, 229, 178, 0.45); }
+        #${APP_ID} .zae-filter-area { flex: 0 0 auto; min-height: max-content; }
         #${APP_ID} .zae-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
         #${APP_ID} label { display: grid; gap: 5px; color: rgba(255,255,255,.84); min-width: 0; }
         #${APP_ID} input,
@@ -93,11 +91,12 @@
             line-height: 1.4;
         }
         #${APP_ID} input, #${APP_ID} select { min-height: 36px; }
-        #${APP_ID} textarea { min-height: 72px; resize: vertical; }
-        #${APP_ID} .zae-section { margin-top: 14px; flex: 0 0 auto; min-height: max-content; }
-        #${APP_ID} .zae-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; flex: 0 0 auto; }
-        #${APP_ID} .zae-status { margin-top: 12px; padding: 9px 10px; border-radius: 6px; background: rgba(0, 0, 0, .16); color: rgba(255,255,255,.82); flex: 0 0 auto; }
-        #${APP_ID} .zae-table-wrap { margin-top: 14px; flex: 1 1 0; min-height: 100px; overflow: auto; border: 1px solid rgba(148, 210, 168, 0.16); border-radius: 7px; }
+        #${APP_ID} textarea { min-height: 66px; resize: vertical; }
+        #${APP_ID} .zae-section { margin-top: 12px; flex: 0 0 auto; min-height: max-content; }
+        #${APP_ID} .zae-help { margin-top: 5px; color: rgba(255,255,255,.52); font-size: 11px; }
+        #${APP_ID} .zae-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; flex: 0 0 auto; }
+        #${APP_ID} .zae-status { margin-top: 10px; padding: 9px 10px; border-radius: 6px; background: rgba(0, 0, 0, .16); color: rgba(255,255,255,.82); flex: 0 0 auto; }
+        #${APP_ID} .zae-table-wrap { margin-top: 12px; flex: 1 1 0; min-height: 100px; overflow: auto; border: 1px solid rgba(148, 210, 168, 0.16); border-radius: 7px; }
         #${APP_ID} table { width: 100%; border-collapse: collapse; min-width: 900px; }
         #${APP_ID} th { position: sticky; top: 0; z-index: 1; background: rgba(20, 63, 42, 0.98); text-align: left; }
         #${APP_ID} th, #${APP_ID} td { padding: 8px 9px; border-bottom: 1px solid rgba(255,255,255,.08); vertical-align: top; }
@@ -165,17 +164,20 @@
     panel.id = APP_ID;
     panel.innerHTML = `
         <div class="zae-header">
-            <div class="zae-title">Zendesk AI Exporter</div>
+            <div>
+                <div class="zae-title">Zendesk AI Exporter</div>
+                <div class="zae-subtitle">Search, filter, select and export tickets</div>
+            </div>
             <button class="zae-close" type="button">×</button>
         </div>
         <div class="zae-body">
-            <div class="zae-tabs">
-                <button class="zae-tab is-active" data-mode="helpdesk-web">Helpdesk Web</button>
-                <button class="zae-tab" data-mode="search">Search tickets</button>
-            </div>
+            <div class="zae-filter-area">
+                <label>Search terms / Zendesk query
+                    <textarea id="zae-query" placeholder='Optional. Examples: checkout error   or   status:solved comment:"payment failed"'></textarea>
+                    <div class="zae-help">Leave empty to export only by the structured filters below.</div>
+                </label>
 
-            <div class="zae-mode" data-panel="helpdesk-web">
-                <div class="zae-grid">
+                <div class="zae-section zae-grid">
                     <label>From date<input type="date" id="zae-from-date"></label>
                     <label>To date<input type="date" id="zae-to-date"></label>
                     <label>Date field
@@ -185,18 +187,12 @@
                             <option value="updated">Updated date</option>
                         </select>
                     </label>
-                    <label>Group<input type="text" id="zae-group" value="Web - Helpdesk"></label>
+                    <label>Group
+                        <input type="text" id="zae-group" value="Web - Helpdesk" placeholder="Leave empty for any group">
+                    </label>
                 </div>
-            </div>
 
-            <div class="zae-mode" data-panel="search" hidden>
-                <label>Zendesk search query
-                    <textarea id="zae-query" placeholder='Example: status:solved comment:"payment failed"'></textarea>
-                </label>
-            </div>
-
-            <div class="zae-section">
-                <div class="zae-grid">
+                <div class="zae-section zae-grid">
                     <label>Comments
                         <select id="zae-comments">
                             <option value="all">Public + internal notes</option>
@@ -249,14 +245,6 @@
     });
     $('.zae-close').addEventListener('click', () => { panel.style.display = 'none'; });
 
-    $$('.zae-tab').forEach((tab) => {
-        tab.addEventListener('click', () => {
-            state.mode = tab.dataset.mode;
-            $$('.zae-tab').forEach((t) => t.classList.toggle('is-active', t === tab));
-            $$('.zae-mode').forEach((modePanel) => { modePanel.hidden = modePanel.dataset.panel !== state.mode; });
-        });
-    });
-
     $('#zae-find').addEventListener('click', findTickets);
     $('#zae-cancel').addEventListener('click', () => {
         state.cancelled = true;
@@ -279,25 +267,23 @@
         setRunningUi(true);
 
         try {
-            let query;
+            const rawQuery = $('#zae-query').value.trim().replace(/\btype:ticket\b/gi, '').trim();
+            const groupName = $('#zae-group').value.trim();
+
             let exactGroupId = null;
             let exactGroupName = null;
+            let group = null;
 
-            if (state.mode === 'helpdesk-web') {
-                const groupName = $('#zae-group').value.trim();
-                if (!groupName) throw new Error('Enter a Zendesk group name.');
-
+            if (groupName) {
                 setStatus(`Resolving Zendesk group “${groupName}”...`);
-                const group = await resolveGroup(groupName);
+                group = await resolveGroup(groupName);
                 if (!group) throw new Error(`Could not find a Zendesk group named “${groupName}”.`);
-
                 exactGroupId = group.id;
                 exactGroupName = group.name;
-                query = buildHelpdeskQuery(group);
-            } else {
-                query = $('#zae-query').value.trim().replace(/\btype:ticket\b/gi, '').trim();
-                if (!query) throw new Error('Enter a Zendesk search query.');
             }
+
+            const query = buildUnifiedQuery(rawQuery, group);
+            if (!query) throw new Error('Enter search terms or choose at least one structured filter.');
 
             setStatus('Searching Zendesk... 0 tickets loaded.');
             const tickets = await searchExportTickets(query, exactGroupId, exactGroupName);
@@ -318,14 +304,18 @@
         }
     }
 
-    function buildHelpdeskQuery(group) {
+    function buildUnifiedQuery(rawQuery, group) {
         const field = $('#zae-date-field').value;
         const from = $('#zae-from-date').value;
         const to = $('#zae-to-date').value;
-        const parts = [`group:${group.id}`];
+        const parts = [];
+
+        if (rawQuery) parts.push(rawQuery);
+        if (group) parts.push(`group:${group.id}`);
         if (from) parts.push(`${field}>=${from}`);
         if (to) parts.push(`${field}<=${to}`);
-        return parts.join(' ');
+
+        return parts.join(' ').trim();
     }
 
     async function resolveGroup(name) {
@@ -363,6 +353,7 @@
                 if (state.cancelled) break;
                 if (exactGroupId && Number(ticket.group_id) !== Number(exactGroupId)) continue;
                 if (seenTicketIds.has(ticket.id)) continue;
+
                 seenTicketIds.add(ticket.id);
                 tickets.push(normalizeSearchTicket(ticket, exactGroupName));
             }
@@ -373,6 +364,7 @@
             const meta = data.meta || {};
             const links = data.links || {};
             const hasMore = meta.has_more === true || meta.has_more === 'true' || meta.has_more === 1 || meta.has_more === '1';
+
             if (!hasMore) break;
 
             let nextCursor = meta.after_cursor || meta.after || null;
@@ -387,6 +379,7 @@
                 console.warn('[Zendesk AI Exporter] Zendesk reported more results but returned no next cursor. Stopping pagination.');
                 break;
             }
+
             if (nextCursor === afterCursor || seenCursors.has(nextCursor)) {
                 console.warn('[Zendesk AI Exporter] Repeated pagination cursor detected. Stopping to prevent an infinite loop.', nextCursor);
                 break;
@@ -439,6 +432,7 @@
             } catch (_) {}
             throw new Error(`Zendesk API returned ${response.status}${detail ? `: ${detail}` : ''}`);
         }
+
         return response.json();
     }
 
@@ -469,6 +463,7 @@
                 updateSelectionUi();
             });
         });
+
         updateSelectionUi();
     }
 
