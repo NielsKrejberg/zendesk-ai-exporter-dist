@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Exporter
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.5.0
+// @version      0.5.1
 // @description  Export Zendesk tickets, build a local knowledge base, and find evidence-based solutions.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -26,20 +26,20 @@
 
     const css = `
     #${APP_ID}, #${APP_ID}-assistant{position:fixed;z-index:2147483646;color:#fff;background:rgba(15,48,32,.91);border:1px solid rgba(148,210,168,.25);border-radius:10px;box-shadow:0 12px 38px rgba(0,0,0,.35);backdrop-filter:blur(14px);font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-    #${APP_ID}{top:7.5vh;left:5vw;width:90vw;height:85vh;display:none;overflow:hidden}
-    #${APP_ID}-assistant{top:8vh;right:3vw;width:min(720px,92vw);max-height:84vh;display:none;overflow:hidden}
+    #${APP_ID}{top:12px;left:12px;width:calc(100vw - 24px);height:calc(100vh - 24px);display:none;overflow:hidden}
+    #${APP_ID}-assistant{top:12px;right:12px;width:min(720px,calc(100vw - 24px));max-height:calc(100vh - 24px);display:none;overflow:hidden}
     #${APP_ID} *,#${APP_ID}-assistant *{box-sizing:border-box}
-    .zae-header{display:flex;align-items:center;justify-content:space-between;padding:13px 15px;border-bottom:1px solid rgba(148,210,168,.18)}
-    .zae-title{font-size:15px;font-weight:650}.zae-subtitle,.zae-help{color:rgba(255,255,255,.58);font-size:11px}.zae-body{height:calc(100% - 56px);padding:13px 15px;overflow:hidden;display:flex;flex-direction:column}.zae-assistant-body{padding:14px;overflow:auto;max-height:calc(84vh - 56px)}
+    .zae-header{display:flex;align-items:center;justify-content:space-between;padding:11px 13px;border-bottom:1px solid rgba(148,210,168,.18);flex:0 0 auto}
+    .zae-title{font-size:15px;font-weight:650}.zae-subtitle,.zae-help{color:rgba(255,255,255,.58);font-size:11px}.zae-body{height:calc(100% - 52px);padding:10px 12px 12px;overflow:auto;display:flex;flex-direction:column;min-height:0}.zae-assistant-body{padding:14px;overflow:auto;max-height:calc(100vh - 76px)}
     #${APP_ID} button,#${APP_ID}-assistant button,#${APP_ID}-toggle,#${APP_ID}-assist-toggle{border:1px solid rgba(255,255,255,.14);border-radius:6px;background:rgba(255,255,255,.08);color:#fff;padding:7px 10px;cursor:pointer}
     button:disabled{opacity:.42;cursor:default}.zae-primary{background:rgba(117,190,139,.20)!important;border-color:rgba(155,229,178,.35)!important}
-    .zae-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.zae-section{margin-top:11px;flex:0 0 auto}.zae-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:11px;align-items:center}
-    #${APP_ID} label{display:grid;gap:5px;color:rgba(255,255,255,.84)}#${APP_ID} input,#${APP_ID} select,#${APP_ID} textarea{width:100%;border:1px solid rgba(255,255,255,.12);border-radius:6px;background:rgba(0,0,0,.18);color:#fff;padding:8px 9px;outline:none}#${APP_ID} textarea{min-height:60px;resize:vertical}
-    .zae-kb{padding:10px;border:1px solid rgba(148,210,168,.16);border-radius:7px;background:rgba(0,0,0,.10)}.zae-kb-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.zae-kb-count{font-weight:600}
-    .zae-status{margin-top:9px;padding:8px 10px;border-radius:6px;background:rgba(0,0,0,.16);color:rgba(255,255,255,.82)}.zae-table-wrap{margin-top:10px;flex:1 1 0;min-height:100px;overflow:auto;border:1px solid rgba(148,210,168,.16);border-radius:7px}.zae-table-wrap table{width:100%;border-collapse:collapse;min-width:980px}.zae-table-wrap th{position:sticky;top:0;z-index:1;background:rgba(20,63,42,.98);text-align:left}.zae-table-wrap th,.zae-table-wrap td{padding:8px 9px;border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top}.zae-link{color:#d9f5e2;text-decoration:none;font-weight:600}.zae-pill{display:inline-block;padding:2px 6px;border-radius:999px;background:rgba(125,200,148,.15);border:1px solid rgba(145,219,168,.18)}
+    .zae-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 10px}.zae-section{margin-top:9px;flex:0 0 auto}.zae-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px;align-items:center;flex:0 0 auto}
+    #${APP_ID} label{display:grid;gap:4px;color:rgba(255,255,255,.84);min-width:0}#${APP_ID} input,#${APP_ID} select,#${APP_ID} textarea{width:100%;min-width:0;border:1px solid rgba(255,255,255,.12);border-radius:6px;background:rgba(0,0,0,.18);color:#fff;padding:7px 8px;outline:none}#${APP_ID} input,#${APP_ID} select{min-height:34px}#${APP_ID} textarea{min-height:48px;max-height:110px;resize:vertical}
+    .zae-kb{padding:8px;border:1px solid rgba(148,210,168,.16);border-radius:7px;background:rgba(0,0,0,.10);flex:0 0 auto}.zae-kb-row{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.zae-kb-count{font-weight:600}.zae-kb-row #zae-kb-files{width:auto;min-width:240px;flex:1 1 360px}.zae-kb-row button{flex:0 0 auto}
+    .zae-status{margin-top:8px;padding:7px 9px;border-radius:6px;background:rgba(0,0,0,.16);color:rgba(255,255,255,.82);flex:0 0 auto}.zae-table-wrap{margin-top:9px;flex:1 0 220px;min-height:220px;overflow:auto;border:1px solid rgba(148,210,168,.16);border-radius:7px}.zae-table-wrap table{width:100%;border-collapse:collapse;min-width:980px}.zae-table-wrap th{position:sticky;top:0;z-index:1;background:rgba(20,63,42,.98);text-align:left}.zae-table-wrap th,.zae-table-wrap td{padding:7px 8px;border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top}.zae-link{color:#d9f5e2;text-decoration:none;font-weight:600}.zae-pill{display:inline-block;padding:2px 6px;border-radius:999px;background:rgba(125,200,148,.15);border:1px solid rgba(145,219,168,.18)}
     #${APP_ID}-toggle,#${APP_ID}-assist-toggle{position:fixed;z-index:2147483645;top:61px;background:rgba(20,63,42,.78);backdrop-filter:blur(12px);white-space:nowrap}#${APP_ID}-toggle{left:790px}#${APP_ID}-assist-toggle{left:935px;display:none;background:rgba(39,91,60,.88)}
     .zae-evidence-head{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:12px}.zae-evidence-level{font-weight:700;padding:4px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.14)}.zae-card{padding:11px;margin:9px 0;border:1px solid rgba(148,210,168,.18);border-radius:8px;background:rgba(0,0,0,.13)}.zae-card-title{font-weight:650;margin-bottom:5px}.zae-score{color:rgba(255,255,255,.58);font-size:11px}.zae-snippet{margin-top:7px;padding:8px;border-left:2px solid rgba(148,210,168,.45);background:rgba(0,0,0,.12);white-space:pre-wrap}.zae-warning{padding:10px;border:1px solid rgba(240,200,120,.25);border-radius:7px;background:rgba(100,70,20,.18)}
-    @media(max-width:760px){#${APP_ID}{top:2.5vh;left:2.5vw;width:95vw;height:95vh}.zae-grid{grid-template-columns:1fr}.zae-body{overflow-y:auto}}
+    @media(max-width:760px){#${APP_ID}{top:6px;left:6px;width:calc(100vw - 12px);height:calc(100vh - 12px)}.zae-grid{grid-template-columns:1fr}.zae-body{overflow-y:auto}.zae-kb-row #zae-kb-files{min-width:100%;flex-basis:100%}.zae-table-wrap{flex-basis:260px;min-height:260px}}
     `;
     const style=document.createElement('style');style.textContent=css;document.head.appendChild(style);
 
