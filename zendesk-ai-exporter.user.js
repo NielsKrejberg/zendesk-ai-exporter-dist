@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Zendesk AI Exporter
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.4.0
-// @description  Export Zendesk tickets and full conversations into AI-friendly datasets.
+// @version      0.5.0
+// @description  Export Zendesk tickets, build a local knowledge base, and find evidence-based solutions.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
 // @updateURL    https://raw.githubusercontent.com/NielsKrejberg/zendesk-ai-exporter-dist/main/zendesk-ai-exporter.user.js
@@ -16,761 +16,106 @@
     'use strict';
 
     const APP_ID = 'zendesk-ai-exporter';
+    const DB_NAME = 'zendesk-ai-exporter-kb';
+    const DB_VERSION = 1;
+    const STORE = 'tickets';
     const COMMENT_CONCURRENCY = 4;
     if (document.getElementById(APP_ID)) return;
 
-    const state = {
-        tickets: [],
-        selectedTicketIds: new Set(),
-        running: false,
-        cancelled: false,
-        groupCache: new Map()
-    };
+    const state = { tickets: [], selectedTicketIds: new Set(), running: false, cancelled: false, groupCache: new Map(), kbCount: 0 };
 
-    const styles = `
-        #${APP_ID} {
-            position: fixed;
-            top: 7.5vh;
-            left: 5vw;
-            z-index: 2147483646;
-            width: 90vw;
-            height: 85vh;
-            display: none;
-            overflow: hidden;
-            color: #fff;
-            background: rgba(15, 48, 32, 0.88);
-            border: 1px solid rgba(148, 210, 168, 0.25);
-            border-radius: 10px;
-            box-shadow: 0 12px 38px rgba(0, 0, 0, 0.35);
-            backdrop-filter: blur(14px);
-            -webkit-backdrop-filter: blur(14px);
-            font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        }
-        #${APP_ID} * { box-sizing: border-box; }
-        #${APP_ID} .zae-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 14px 16px;
-            border-bottom: 1px solid rgba(148, 210, 168, 0.18);
-            flex: 0 0 auto;
-        }
-        #${APP_ID} .zae-title { font-size: 15px; font-weight: 650; }
-        #${APP_ID} .zae-subtitle { margin-top: 2px; color: rgba(255,255,255,.60); font-size: 12px; }
-        #${APP_ID} .zae-close,
-        #${APP_ID} button {
-            border: 1px solid rgba(255, 255, 255, 0.14);
-            border-radius: 6px;
-            background: rgba(255, 255, 255, 0.08);
-            color: #fff;
-            padding: 7px 10px;
-            cursor: pointer;
-        }
-        #${APP_ID} button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.14); }
-        #${APP_ID} button:disabled { opacity: .42; cursor: default; }
-        #${APP_ID} .zae-close { padding: 4px 8px; }
-        #${APP_ID} .zae-body {
-            height: calc(100% - 58px);
-            padding: 14px 16px 16px;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-        }
-        #${APP_ID} .zae-filter-area { flex: 0 0 auto; min-height: max-content; }
-        #${APP_ID} .zae-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-        #${APP_ID} label { display: grid; gap: 5px; color: rgba(255,255,255,.84); min-width: 0; }
-        #${APP_ID} input,
-        #${APP_ID} select,
-        #${APP_ID} textarea {
-            width: 100%;
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            border-radius: 6px;
-            background: rgba(0, 0, 0, 0.18);
-            color: #fff;
-            padding: 8px 9px;
-            outline: none;
-            line-height: 1.4;
-        }
-        #${APP_ID} input, #${APP_ID} select { min-height: 36px; }
-        #${APP_ID} textarea { min-height: 66px; resize: vertical; }
-        #${APP_ID} .zae-section { margin-top: 12px; flex: 0 0 auto; min-height: max-content; }
-        #${APP_ID} .zae-help { margin-top: 5px; color: rgba(255,255,255,.52); font-size: 11px; }
-        #${APP_ID} .zae-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; flex: 0 0 auto; }
-        #${APP_ID} .zae-primary { background: rgba(117, 190, 139, .20); border-color: rgba(155, 229, 178, .35); }
-        #${APP_ID} .zae-status { margin-top: 10px; padding: 9px 10px; border-radius: 6px; background: rgba(0, 0, 0, .16); color: rgba(255,255,255,.82); flex: 0 0 auto; }
-        #${APP_ID} .zae-table-wrap { margin-top: 12px; flex: 1 1 0; min-height: 100px; overflow: auto; border: 1px solid rgba(148, 210, 168, 0.16); border-radius: 7px; }
-        #${APP_ID} table { width: 100%; border-collapse: collapse; min-width: 980px; }
-        #${APP_ID} th { position: sticky; top: 0; z-index: 1; background: rgba(20, 63, 42, 0.98); text-align: left; }
-        #${APP_ID} th, #${APP_ID} td { padding: 8px 9px; border-bottom: 1px solid rgba(255,255,255,.08); vertical-align: top; }
-        #${APP_ID} tr:hover td { background: rgba(255,255,255,.035); }
-        #${APP_ID} .zae-check { width: auto; min-height: 0; accent-color: #79bd8d; }
-        #${APP_ID} .zae-link { color: #d9f5e2; text-decoration: none; font-weight: 600; }
-        #${APP_ID} .zae-link:hover { text-decoration: underline; }
-        #${APP_ID} .zae-pill { display: inline-block; padding: 2px 6px; border-radius: 999px; background: rgba(125, 200, 148, .15); border: 1px solid rgba(145, 219, 168, .18); }
-        #${APP_ID} .zae-comment-count { white-space: nowrap; color: rgba(255,255,255,.72); }
-        #${APP_ID}-toggle {
-            position: fixed;
-            z-index: 2147483645;
-            padding: 5px 8px;
-            border: 1px solid rgba(145, 219, 168, .24);
-            border-radius: 5px;
-            background: rgba(20, 63, 42, .75);
-            color: #fff;
-            backdrop-filter: blur(12px);
-            cursor: pointer;
-            white-space: nowrap;
-        }
-        @media (max-width: 760px) {
-            #${APP_ID} { top: 2.5vh; left: 2.5vw; width: 95vw; height: 95vh; }
-            #${APP_ID} .zae-grid { grid-template-columns: 1fr; }
-            #${APP_ID} .zae-body { overflow-y: auto; }
-            #${APP_ID} .zae-table-wrap { flex: 0 0 320px; }
-        }
+    const css = `
+    #${APP_ID}, #${APP_ID}-assistant{position:fixed;z-index:2147483646;color:#fff;background:rgba(15,48,32,.91);border:1px solid rgba(148,210,168,.25);border-radius:10px;box-shadow:0 12px 38px rgba(0,0,0,.35);backdrop-filter:blur(14px);font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    #${APP_ID}{top:7.5vh;left:5vw;width:90vw;height:85vh;display:none;overflow:hidden}
+    #${APP_ID}-assistant{top:8vh;right:3vw;width:min(720px,92vw);max-height:84vh;display:none;overflow:hidden}
+    #${APP_ID} *,#${APP_ID}-assistant *{box-sizing:border-box}
+    .zae-header{display:flex;align-items:center;justify-content:space-between;padding:13px 15px;border-bottom:1px solid rgba(148,210,168,.18)}
+    .zae-title{font-size:15px;font-weight:650}.zae-subtitle,.zae-help{color:rgba(255,255,255,.58);font-size:11px}.zae-body{height:calc(100% - 56px);padding:13px 15px;overflow:hidden;display:flex;flex-direction:column}.zae-assistant-body{padding:14px;overflow:auto;max-height:calc(84vh - 56px)}
+    #${APP_ID} button,#${APP_ID}-assistant button,#${APP_ID}-toggle,#${APP_ID}-assist-toggle{border:1px solid rgba(255,255,255,.14);border-radius:6px;background:rgba(255,255,255,.08);color:#fff;padding:7px 10px;cursor:pointer}
+    button:disabled{opacity:.42;cursor:default}.zae-primary{background:rgba(117,190,139,.20)!important;border-color:rgba(155,229,178,.35)!important}
+    .zae-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.zae-section{margin-top:11px;flex:0 0 auto}.zae-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:11px;align-items:center}
+    #${APP_ID} label{display:grid;gap:5px;color:rgba(255,255,255,.84)}#${APP_ID} input,#${APP_ID} select,#${APP_ID} textarea{width:100%;border:1px solid rgba(255,255,255,.12);border-radius:6px;background:rgba(0,0,0,.18);color:#fff;padding:8px 9px;outline:none}#${APP_ID} textarea{min-height:60px;resize:vertical}
+    .zae-kb{padding:10px;border:1px solid rgba(148,210,168,.16);border-radius:7px;background:rgba(0,0,0,.10)}.zae-kb-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.zae-kb-count{font-weight:600}
+    .zae-status{margin-top:9px;padding:8px 10px;border-radius:6px;background:rgba(0,0,0,.16);color:rgba(255,255,255,.82)}.zae-table-wrap{margin-top:10px;flex:1 1 0;min-height:100px;overflow:auto;border:1px solid rgba(148,210,168,.16);border-radius:7px}.zae-table-wrap table{width:100%;border-collapse:collapse;min-width:980px}.zae-table-wrap th{position:sticky;top:0;z-index:1;background:rgba(20,63,42,.98);text-align:left}.zae-table-wrap th,.zae-table-wrap td{padding:8px 9px;border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top}.zae-link{color:#d9f5e2;text-decoration:none;font-weight:600}.zae-pill{display:inline-block;padding:2px 6px;border-radius:999px;background:rgba(125,200,148,.15);border:1px solid rgba(145,219,168,.18)}
+    #${APP_ID}-toggle,#${APP_ID}-assist-toggle{position:fixed;z-index:2147483645;top:61px;background:rgba(20,63,42,.78);backdrop-filter:blur(12px);white-space:nowrap}#${APP_ID}-toggle{left:790px}#${APP_ID}-assist-toggle{left:935px;display:none;background:rgba(39,91,60,.88)}
+    .zae-evidence-head{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:12px}.zae-evidence-level{font-weight:700;padding:4px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.14)}.zae-card{padding:11px;margin:9px 0;border:1px solid rgba(148,210,168,.18);border-radius:8px;background:rgba(0,0,0,.13)}.zae-card-title{font-weight:650;margin-bottom:5px}.zae-score{color:rgba(255,255,255,.58);font-size:11px}.zae-snippet{margin-top:7px;padding:8px;border-left:2px solid rgba(148,210,168,.45);background:rgba(0,0,0,.12);white-space:pre-wrap}.zae-warning{padding:10px;border:1px solid rgba(240,200,120,.25);border-radius:7px;background:rgba(100,70,20,.18)}
+    @media(max-width:760px){#${APP_ID}{top:2.5vh;left:2.5vw;width:95vw;height:95vh}.zae-grid{grid-template-columns:1fr}.zae-body{overflow-y:auto}}
     `;
+    const style=document.createElement('style');style.textContent=css;document.head.appendChild(style);
 
-    const style = document.createElement('style');
-    style.textContent = styles;
-    document.head.appendChild(style);
+    const toggle=document.createElement('button');toggle.id=`${APP_ID}-toggle`;toggle.textContent='Zendesk AI Export';document.body.appendChild(toggle);
+    const assistToggle=document.createElement('button');assistToggle.id=`${APP_ID}-assist-toggle`;assistToggle.textContent='Find historical evidence';document.body.appendChild(assistToggle);
 
-    const toggle = document.createElement('button');
-    toggle.id = `${APP_ID}-toggle`;
-    toggle.textContent = 'Zendesk AI Export';
-    document.body.appendChild(toggle);
-
-    function findReplyTemplatesButton() {
-        return [...document.querySelectorAll('button')].find((button) => {
-            if (button === toggle) return false;
-            const text = (button.textContent || '').trim().toLowerCase();
-            return /^(show|hide)( reply)? templates$/.test(text);
-        });
-    }
-
-    function positionToggle() {
-        const templateButton = findReplyTemplatesButton();
-        if (templateButton) {
-            const rect = templateButton.getBoundingClientRect();
-            toggle.style.top = `${Math.round(rect.top)}px`;
-            toggle.style.left = `${Math.round(rect.right + 8)}px`;
-            toggle.style.right = 'auto';
-            return;
-        }
-        toggle.style.top = '61px';
-        toggle.style.left = '790px';
-        toggle.style.right = 'auto';
-    }
-
-    positionToggle();
-    window.addEventListener('resize', positionToggle);
-    new MutationObserver(positionToggle).observe(document.body, { childList: true, subtree: true, characterData: true });
-
-    const panel = document.createElement('div');
-    panel.id = APP_ID;
-    panel.innerHTML = `
-        <div class="zae-header">
-            <div>
-                <div class="zae-title">Zendesk AI Exporter</div>
-                <div class="zae-subtitle">Search, select, load conversations and export tickets</div>
-            </div>
-            <button class="zae-close" type="button">×</button>
+    const panel=document.createElement('div');panel.id=APP_ID;panel.innerHTML=`
+      <div class="zae-header"><div><div class="zae-title">Zendesk AI Exporter</div><div class="zae-subtitle">Export tickets and maintain a local historical knowledge base</div></div><button class="zae-close">×</button></div>
+      <div class="zae-body">
+        <div class="zae-kb">
+          <div class="zae-kb-row"><strong>Knowledge base</strong><span class="zae-kb-count" id="zae-kb-count">Loading…</span></div>
+          <div class="zae-kb-row" style="margin-top:7px"><input type="file" id="zae-kb-files" accept=".jsonl,.ndjson,.json" multiple><button id="zae-kb-import" class="zae-primary">Import file(s)</button><button id="zae-kb-clear">Clear knowledge base</button></div>
+          <div class="zae-help">Imported tickets stay in this browser using IndexedDB. Re-importing the same ticket updates it.</div>
         </div>
-        <div class="zae-body">
-            <div class="zae-filter-area">
-                <label>Search terms / Zendesk query
-                    <textarea id="zae-query" placeholder='Optional. Examples: checkout error   or   status:solved comment:"payment failed"'></textarea>
-                    <div class="zae-help">Leave empty to export only by the structured filters below.</div>
-                </label>
-
-                <div class="zae-section zae-grid">
-                    <label>From date<input type="date" id="zae-from-date"></label>
-                    <label>To date<input type="date" id="zae-to-date"></label>
-                    <label>Date field
-                        <select id="zae-date-field">
-                            <option value="solved">Solved date</option>
-                            <option value="created">Created date</option>
-                            <option value="updated">Updated date</option>
-                        </select>
-                    </label>
-                    <label>Group
-                        <input type="text" id="zae-group" value="Web - Helpdesk" placeholder="Leave empty for any group">
-                    </label>
-                </div>
-
-                <div class="zae-section zae-grid">
-                    <label>Comments in JSONL
-                        <select id="zae-comments">
-                            <option value="all">Public + internal notes</option>
-                            <option value="public">Public only</option>
-                        </select>
-                    </label>
-                    <label>Attachment handling
-                        <select id="zae-attachments">
-                            <option value="urls">Include attachment URLs</option>
-                            <option value="none">Exclude attachments</option>
-                        </select>
-                    </label>
-                </div>
-            </div>
-
-            <div class="zae-actions">
-                <button id="zae-find" class="zae-primary" type="button">Find matching tickets</button>
-                <button id="zae-load-comments" type="button" disabled>Load conversations</button>
-                <button id="zae-cancel" type="button" disabled>Cancel</button>
-                <button id="zae-select-all" type="button" disabled>Select all</button>
-                <button id="zae-select-none" type="button" disabled>Select none</button>
-                <button id="zae-export-jsonl" type="button" disabled>Export JSONL</button>
-                <button id="zae-export-csv" type="button" disabled>Export CSV</button>
-            </div>
-
-            <div class="zae-status" id="zae-status">Ready. No tickets loaded.</div>
-            <div class="zae-table-wrap">
-                <table>
-                    <thead>
-                        <tr>
-                            <th><input class="zae-check" type="checkbox" id="zae-check-all" disabled></th>
-                            <th>ID</th>
-                            <th>Date</th>
-                            <th>Subject</th>
-                            <th>Status</th>
-                            <th>Group</th>
-                            <th>Conversation</th>
-                        </tr>
-                    </thead>
-                    <tbody id="zae-results"></tbody>
-                </table>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(panel);
-
-    const $ = (selector) => panel.querySelector(selector);
-    const $$ = (selector) => [...panel.querySelectorAll(selector)];
-
-    toggle.addEventListener('click', () => {
-        panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
-    });
-    $('.zae-close').addEventListener('click', () => { panel.style.display = 'none'; });
-
-    $('#zae-find').addEventListener('click', findTickets);
-    $('#zae-load-comments').addEventListener('click', loadSelectedConversations);
-    $('#zae-cancel').addEventListener('click', () => {
-        state.cancelled = true;
-        setStatus('Cancellation requested. Finishing active requests...');
-    });
-    $('#zae-select-all').addEventListener('click', selectAll);
-    $('#zae-select-none').addEventListener('click', selectNone);
-    $('#zae-check-all').addEventListener('change', (event) => event.target.checked ? selectAll() : selectNone());
-    $('#zae-export-jsonl').addEventListener('click', exportSelectedJsonl);
-    $('#zae-export-csv').addEventListener('click', () => exportCsv(getSelectedTickets()));
-
-    async function findTickets() {
-        if (state.running) return;
-
-        state.running = true;
-        state.cancelled = false;
-        state.tickets = [];
-        state.selectedTicketIds.clear();
-        renderResults();
-        setRunningUi(true);
-
-        try {
-            const rawQuery = $('#zae-query').value.trim().replace(/\btype:ticket\b/gi, '').trim();
-            const groupName = $('#zae-group').value.trim();
-
-            let exactGroupId = null;
-            let exactGroupName = null;
-            let group = null;
-
-            if (groupName) {
-                setStatus(`Resolving Zendesk group “${groupName}”...`);
-                group = await resolveGroup(groupName);
-                if (!group) throw new Error(`Could not find a Zendesk group named “${groupName}”.`);
-                exactGroupId = group.id;
-                exactGroupName = group.name;
-            }
-
-            const query = buildUnifiedQuery(rawQuery, group);
-            if (!query) throw new Error('Enter search terms or choose at least one structured filter.');
-
-            setStatus('Searching Zendesk... 0 tickets loaded.');
-            const tickets = await searchExportTickets(query, exactGroupId, exactGroupName);
-
-            state.tickets = tickets;
-            state.tickets.forEach((ticket) => state.selectedTicketIds.add(ticket.id));
-            renderResults();
-
-            setStatus(state.cancelled
-                ? `Cancelled. ${tickets.length.toLocaleString()} tickets loaded so far.`
-                : `Found ${tickets.length.toLocaleString()} tickets. Select the tickets you want, then load conversations or export JSONL.`);
-        } catch (error) {
-            console.error('[Zendesk AI Exporter]', error);
-            setStatus(`Error: ${error.message}`);
-        } finally {
-            state.running = false;
-            setRunningUi(false);
-        }
-    }
-
-    function buildUnifiedQuery(rawQuery, group) {
-        const field = $('#zae-date-field').value;
-        const from = $('#zae-from-date').value;
-        const to = $('#zae-to-date').value;
-        const parts = [];
-
-        if (rawQuery) parts.push(rawQuery);
-        if (group) parts.push(`group:${group.id}`);
-        if (from) parts.push(`${field}>=${from}`);
-        if (to) parts.push(`${field}<=${to}`);
-
-        return parts.join(' ').trim();
-    }
-
-    async function resolveGroup(name) {
-        const cacheKey = name.toLowerCase();
-        if (state.groupCache.has(cacheKey)) return state.groupCache.get(cacheKey);
-
-        const url = `/api/v2/groups/autocomplete.json?name=${encodeURIComponent(name)}`;
-        const data = await apiGet(url);
-        const groups = data.groups || [];
-        const group = groups.find((item) => (item.name || '').toLowerCase() === cacheKey) || null;
-        if (group) state.groupCache.set(cacheKey, group);
-        return group;
-    }
-
-    async function searchExportTickets(query, exactGroupId, exactGroupName) {
-        const tickets = [];
-        const seenTicketIds = new Set();
-        const seenCursors = new Set();
-        let afterCursor = null;
-        let page = 0;
-
-        while (!state.cancelled) {
-            page += 1;
-
-            const params = new URLSearchParams();
-            params.set('query', query);
-            params.set('filter[type]', 'ticket');
-            params.set('page[size]', '100');
-            if (afterCursor) params.set('page[after]', afterCursor);
-
-            const data = await apiGet(`/api/v2/search/export.json?${params.toString()}`);
-            const results = Array.isArray(data.results) ? data.results : [];
-
-            for (const ticket of results) {
-                if (state.cancelled) break;
-                if (exactGroupId && Number(ticket.group_id) !== Number(exactGroupId)) continue;
-                if (seenTicketIds.has(ticket.id)) continue;
-
-                seenTicketIds.add(ticket.id);
-                tickets.push(normalizeSearchTicket(ticket, exactGroupName));
-            }
-
-            state.tickets = tickets;
-            setStatus(`Searching Zendesk... ${tickets.length.toLocaleString()} tickets loaded (page ${page}).`);
-
-            const meta = data.meta || {};
-            const links = data.links || {};
-            const hasMore = meta.has_more === true || meta.has_more === 'true' || meta.has_more === 1 || meta.has_more === '1';
-            if (!hasMore) break;
-
-            let nextCursor = meta.after_cursor || meta.after || null;
-            if (!nextCursor && links.next) {
-                try {
-                    const nextUrl = new URL(links.next, location.origin);
-                    nextCursor = nextUrl.searchParams.get('page[after]');
-                } catch (_) {}
-            }
-
-            if (!nextCursor) {
-                console.warn('[Zendesk AI Exporter] Zendesk reported more results but returned no next cursor.');
-                break;
-            }
-
-            if (nextCursor === afterCursor || seenCursors.has(nextCursor)) {
-                console.warn('[Zendesk AI Exporter] Repeated pagination cursor detected.');
-                break;
-            }
-
-            seenCursors.add(nextCursor);
-            afterCursor = nextCursor;
-        }
-
-        return tickets;
-    }
-
-    function normalizeSearchTicket(ticket, groupName) {
-        return {
-            id: ticket.id,
-            created_at: ticket.created_at || null,
-            updated_at: ticket.updated_at || null,
-            solved_at: ticket.solved_at || null,
-            status: ticket.status || '',
-            subject: ticket.subject || '',
-            description: ticket.description || '',
-            group_id: ticket.group_id || null,
-            group_name: groupName || '',
-            assignee_id: ticket.assignee_id || null,
-            requester_id: ticket.requester_id || null,
-            submitter_id: ticket.submitter_id || null,
-            priority: ticket.priority || null,
-            type: ticket.type || null,
-            tags: Array.isArray(ticket.tags) ? ticket.tags : [],
-            via: ticket.via || null,
-            custom_fields: ticket.custom_fields || [],
-            ticket_form_id: ticket.ticket_form_id || null,
-            brand_id: ticket.brand_id || null,
-            conversation: null,
-            conversation_loaded: false,
-            conversation_error: null,
-            url: `${location.origin}/agent/tickets/${ticket.id}`
-        };
-    }
-
-    async function loadSelectedConversations() {
-        if (state.running) return;
-        const tickets = getSelectedTickets();
-        if (!tickets.length) return;
-
-        state.running = true;
-        state.cancelled = false;
-        setRunningUi(true);
-
-        try {
-            await ensureConversationsLoaded(tickets);
-            renderResults();
-            const loaded = tickets.filter((ticket) => ticket.conversation_loaded).length;
-            const failed = tickets.filter((ticket) => ticket.conversation_error).length;
-            setStatus(state.cancelled
-                ? `Cancelled. Conversations loaded for ${loaded.toLocaleString()} of ${tickets.length.toLocaleString()} selected tickets.`
-                : `Conversations loaded for ${loaded.toLocaleString()} selected tickets${failed ? `; ${failed} failed` : ''}.`);
-        } catch (error) {
-            console.error('[Zendesk AI Exporter]', error);
-            setStatus(`Error loading conversations: ${error.message}`);
-        } finally {
-            state.running = false;
-            setRunningUi(false);
-        }
-    }
-
-    async function ensureConversationsLoaded(tickets) {
-        const pending = tickets.filter((ticket) => !ticket.conversation_loaded && !ticket.conversation_error);
-        if (!pending.length) return;
-
-        let completed = tickets.length - pending.length;
-        let cursor = 0;
-
-        const workers = Array.from({ length: Math.min(COMMENT_CONCURRENCY, pending.length) }, async () => {
-            while (!state.cancelled) {
-                const index = cursor++;
-                if (index >= pending.length) return;
-
-                const ticket = pending[index];
-                try {
-                    ticket.conversation = await fetchTicketComments(ticket.id);
-                    ticket.conversation_loaded = true;
-                    ticket.conversation_error = null;
-                } catch (error) {
-                    ticket.conversation = [];
-                    ticket.conversation_loaded = false;
-                    ticket.conversation_error = error.message;
-                    console.error(`[Zendesk AI Exporter] Failed to load comments for ticket ${ticket.id}`, error);
-                }
-
-                completed += 1;
-                setStatus(`Loading conversations... ${completed.toLocaleString()} / ${tickets.length.toLocaleString()} tickets processed.`);
-            }
-        });
-
-        await Promise.all(workers);
-    }
-
-    async function fetchTicketComments(ticketId) {
-        const comments = [];
-        const users = new Map();
-        const seenCursors = new Set();
-        let nextUrl = `/api/v2/tickets/${ticketId}/comments.json?include=users&include_inline_images=true&page[size]=100&sort_order=asc`;
-
-        while (nextUrl && !state.cancelled) {
-            const data = await apiGet(nextUrl);
-
-            for (const user of data.users || []) {
-                users.set(Number(user.id), {
-                    id: user.id,
-                    name: user.name || '',
-                    email: user.email || '',
-                    role: user.role || ''
-                });
-            }
-
-            for (const comment of data.comments || []) {
-                const author = users.get(Number(comment.author_id)) || null;
-                comments.push(normalizeComment(comment, author));
-            }
-
-            const meta = data.meta || {};
-            const links = data.links || {};
-            const hasMore = meta.has_more === true || meta.has_more === 'true' || meta.has_more === 1 || meta.has_more === '1';
-            if (!hasMore) break;
-
-            let candidate = links.next || null;
-            if (!candidate) {
-                const cursor = meta.after_cursor || meta.after || null;
-                if (cursor) {
-                    candidate = `/api/v2/tickets/${ticketId}/comments.json?include=users&include_inline_images=true&page[size]=100&sort_order=asc&page[after]=${encodeURIComponent(cursor)}`;
-                }
-            }
-
-            if (!candidate || seenCursors.has(candidate)) break;
-            seenCursors.add(candidate);
-            nextUrl = toSameOriginApiPath(candidate);
-        }
-
-        return comments;
-    }
-
-    function normalizeComment(comment, author) {
-        const includeAttachments = $('#zae-attachments').value === 'urls';
-        return {
-            id: comment.id,
-            created_at: comment.created_at || null,
-            public: comment.public === true,
-            type: comment.type || 'Comment',
-            author_id: comment.author_id || null,
-            author: author,
-            body: comment.plain_body || comment.body || '',
-            via: comment.via || null,
-            attachments: includeAttachments
-                ? (comment.attachments || []).map((attachment) => ({
-                    id: attachment.id || null,
-                    file_name: attachment.file_name || attachment.name || '',
-                    content_type: attachment.content_type || '',
-                    size: attachment.size || null,
-                    content_url: attachment.content_url || ''
-                }))
-                : []
-        };
-    }
-
-    function toSameOriginApiPath(value) {
-        try {
-            const url = new URL(value, location.origin);
-            if (url.origin !== location.origin) throw new Error('Unexpected Zendesk pagination host.');
-            return `${url.pathname}${url.search}`;
-        } catch (error) {
-            if (String(value).startsWith('/')) return value;
-            throw error;
-        }
-    }
-
-    async function exportSelectedJsonl() {
-        if (state.running) return;
-        const selected = getSelectedTickets();
-        if (!selected.length) return;
-
-        state.running = true;
-        state.cancelled = false;
-        setRunningUi(true);
-
-        try {
-            await ensureConversationsLoaded(selected);
-            if (state.cancelled) {
-                setStatus('Export cancelled before download.');
-                return;
-            }
-
-            const commentMode = $('#zae-comments').value;
-            const exportTickets = selected.map((ticket) => buildExportTicket(ticket, commentMode));
-            exportJsonl(exportTickets);
-            setStatus(`Exported ${exportTickets.length.toLocaleString()} tickets with conversations.`);
-        } catch (error) {
-            console.error('[Zendesk AI Exporter]', error);
-            setStatus(`Export failed: ${error.message}`);
-        } finally {
-            state.running = false;
-            setRunningUi(false);
-        }
-    }
-
-    function buildExportTicket(ticket, commentMode) {
-        const conversation = Array.isArray(ticket.conversation)
-            ? ticket.conversation.filter((comment) => commentMode === 'all' || comment.public)
-            : [];
-
-        const publicCount = conversation.filter((comment) => comment.public).length;
-        const internalCount = conversation.filter((comment) => !comment.public).length;
-
-        return {
-            ...ticket,
-            conversation,
-            conversation_loaded: ticket.conversation_loaded,
-            conversation_error: ticket.conversation_error,
-            derived: {
-                conversation_length: conversation.length,
-                public_comment_count: publicCount,
-                internal_note_count: internalCount
-            }
-        };
-    }
-
-    async function apiGet(url, attempt = 0) {
-        const response = await fetch(url, {
-            method: 'GET',
-            credentials: 'same-origin',
-            headers: { 'Accept': 'application/json' }
-        });
-
-        if (response.status === 429 && attempt < 5) {
-            const retryAfter = Math.max(1, Number(response.headers.get('Retry-After')) || 2);
-            setStatus(`Zendesk rate limit reached. Retrying in ${retryAfter}s...`);
-            await sleep(retryAfter * 1000);
-            if (state.cancelled) throw new Error('Cancelled.');
-            return apiGet(url, attempt + 1);
-        }
-
-        if (!response.ok) {
-            let detail = '';
-            try {
-                const body = await response.json();
-                detail = body.description || body.error || body.message || '';
-            } catch (_) {}
-            throw new Error(`Zendesk API returned ${response.status}${detail ? `: ${detail}` : ''}`);
-        }
-
-        return response.json();
-    }
-
-    function sleep(ms) {
-        return new Promise((resolve) => setTimeout(resolve, ms));
-    }
-
-    function renderResults() {
-        const tbody = $('#zae-results');
-        tbody.textContent = '';
-
-        const fragment = document.createDocumentFragment();
-        for (const ticket of state.tickets) {
-            const tr = document.createElement('tr');
-            const displayDate = ticket.solved_at || ticket.updated_at || ticket.created_at || '';
-            const conversationText = ticket.conversation_loaded
-                ? `${(ticket.conversation || []).length} comments`
-                : ticket.conversation_error
-                    ? 'Failed'
-                    : 'Not loaded';
-
-            tr.innerHTML = `
-                <td><input class="zae-check zae-row-check" type="checkbox" data-id="${ticket.id}" ${state.selectedTicketIds.has(ticket.id) ? 'checked' : ''}></td>
-                <td><a class="zae-link" href="${escapeHtml(ticket.url)}" target="_blank" rel="noopener">${ticket.id}</a></td>
-                <td>${escapeHtml(formatDate(displayDate))}</td>
-                <td>${escapeHtml(ticket.subject || '')}</td>
-                <td><span class="zae-pill">${escapeHtml(ticket.status || '')}</span></td>
-                <td>${escapeHtml(ticket.group_name || ticket.group_id || '')}</td>
-                <td class="zae-comment-count">${escapeHtml(conversationText)}</td>
-            `;
-            fragment.appendChild(tr);
-        }
-        tbody.appendChild(fragment);
-
-        $$('.zae-row-check').forEach((checkbox) => {
-            checkbox.addEventListener('change', () => {
-                const id = Number(checkbox.dataset.id);
-                checkbox.checked ? state.selectedTicketIds.add(id) : state.selectedTicketIds.delete(id);
-                updateSelectionUi();
-            });
-        });
-
-        updateSelectionUi();
-    }
-
-    function selectAll() {
-        state.tickets.forEach((ticket) => state.selectedTicketIds.add(ticket.id));
-        $$('.zae-row-check').forEach((checkbox) => { checkbox.checked = true; });
-        updateSelectionUi();
-    }
-
-    function selectNone() {
-        state.selectedTicketIds.clear();
-        $$('.zae-row-check').forEach((checkbox) => { checkbox.checked = false; });
-        updateSelectionUi();
-    }
-
-    function updateSelectionUi() {
-        const hasTickets = state.tickets.length > 0;
-        const selected = state.selectedTicketIds.size;
-        $('#zae-load-comments').disabled = !selected || state.running;
-        $('#zae-export-jsonl').disabled = !selected || state.running;
-        $('#zae-export-csv').disabled = !selected || state.running;
-        $('#zae-select-all').disabled = !hasTickets || state.running;
-        $('#zae-select-none').disabled = !hasTickets || state.running;
-        $('#zae-check-all').disabled = !hasTickets || state.running;
-        $('#zae-check-all').checked = hasTickets && selected === state.tickets.length;
-        $('#zae-check-all').indeterminate = selected > 0 && selected < state.tickets.length;
-    }
-
-    function setRunningUi(running) {
-        $('#zae-find').disabled = running;
-        $('#zae-cancel').disabled = !running;
-        updateSelectionUi();
-    }
-
-    function setStatus(message) {
-        $('#zae-status').textContent = message;
-    }
-
-    function getSelectedTickets() {
-        return state.tickets.filter((ticket) => state.selectedTicketIds.has(ticket.id));
-    }
-
-    function exportJsonl(tickets) {
-        const body = tickets.map((ticket) => JSON.stringify(ticket)).join('\n');
-        downloadBlob(body, `zendesk-tickets-${dateStamp()}.jsonl`, 'application/x-ndjson;charset=utf-8');
-    }
-
-    function exportCsv(tickets) {
-        const headers = ['id', 'created_at', 'updated_at', 'solved_at', 'status', 'subject', 'group_id', 'group_name', 'assignee_id', 'priority', 'type', 'tags', 'conversation_loaded', 'conversation_count', 'url'];
-        const rows = [headers.map(csvCell).join(',')];
-        for (const ticket of tickets) {
-            const values = {
-                ...ticket,
-                tags: (ticket.tags || []).join(' | '),
-                conversation_count: Array.isArray(ticket.conversation) ? ticket.conversation.length : ''
-            };
-            rows.push(headers.map((key) => csvCell(values[key])).join(','));
-        }
-        downloadBlob(rows.join('\n'), `zendesk-tickets-${dateStamp()}.csv`, 'text/csv;charset=utf-8');
-    }
-
-    function csvCell(value) {
-        const str = value == null ? '' : String(value);
-        return `"${str.replaceAll('"', '""')}"`;
-    }
-
-    function downloadBlob(content, filename, type) {
-        const blob = new Blob([content], { type });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-    }
-
-    function formatDate(value) {
-        if (!value) return '';
-        const date = new Date(value);
-        return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
-    }
-
-    function escapeHtml(value) {
-        return String(value ?? '')
-            .replaceAll('&', '&amp;')
-            .replaceAll('<', '&lt;')
-            .replaceAll('>', '&gt;')
-            .replaceAll('"', '&quot;')
-            .replaceAll("'", '&#039;');
-    }
-
-    function dateStamp() {
-        return new Date().toISOString().slice(0, 10);
-    }
+        <div class="zae-section"><label>Search terms / Zendesk query<textarea id="zae-query" placeholder='Optional. Example: checkout error'></textarea></label></div>
+        <div class="zae-section zae-grid"><label>From date<input type="date" id="zae-from-date"></label><label>To date<input type="date" id="zae-to-date"></label><label>Date field<select id="zae-date-field"><option value="solved">Solved date</option><option value="created">Created date</option><option value="updated">Updated date</option></select></label><label>Group<input id="zae-group" value="Web - Helpdesk" placeholder="Leave empty for any group"></label></div>
+        <div class="zae-section zae-grid"><label>Comments in JSONL<select id="zae-comments"><option value="all">Public + internal notes</option><option value="public">Public only</option></select></label><label>Attachment handling<select id="zae-attachments"><option value="urls">Include attachment URLs</option><option value="none">Exclude attachments</option></select></label></div>
+        <div class="zae-actions"><button id="zae-find" class="zae-primary">Find matching tickets</button><button id="zae-load-comments" disabled>Load conversations</button><button id="zae-cancel" disabled>Cancel</button><button id="zae-select-all" disabled>Select all</button><button id="zae-select-none" disabled>Select none</button><button id="zae-export-jsonl" disabled>Export JSONL</button><button id="zae-export-csv" disabled>Export CSV</button></div>
+        <div class="zae-status" id="zae-status">Ready.</div>
+        <div class="zae-table-wrap"><table><thead><tr><th><input type="checkbox" id="zae-check-all" disabled></th><th>ID</th><th>Date</th><th>Subject</th><th>Status</th><th>Group</th><th>Conversation</th></tr></thead><tbody id="zae-results"></tbody></table></div>
+      </div>`;document.body.appendChild(panel);
+
+    const assistant=document.createElement('div');assistant.id=`${APP_ID}-assistant`;assistant.innerHTML=`<div class="zae-header"><div><div class="zae-title">Historical Evidence Assistant</div><div class="zae-subtitle">Only proposes a direction when imported Zendesk history supports it</div></div><button id="zae-assistant-close">×</button></div><div class="zae-assistant-body" id="zae-assistant-body">No analysis yet.</div>`;document.body.appendChild(assistant);
+
+    const $=s=>panel.querySelector(s), A=s=>assistant.querySelector(s);
+    toggle.onclick=()=>panel.style.display=panel.style.display==='block'?'none':'block';$('.zae-close').onclick=()=>panel.style.display='none';A('#zae-assistant-close').onclick=()=>assistant.style.display='none';assistToggle.onclick=analyzeCurrentTicket;
+    $('#zae-find').onclick=findTickets;$('#zae-load-comments').onclick=loadSelectedConversations;$('#zae-cancel').onclick=()=>{state.cancelled=true;setStatus('Cancellation requested…')};$('#zae-select-all').onclick=selectAll;$('#zae-select-none').onclick=selectNone;$('#zae-check-all').onchange=e=>e.target.checked?selectAll():selectNone();$('#zae-export-jsonl').onclick=exportSelectedJsonl;$('#zae-export-csv').onclick=()=>exportCsv(getSelectedTickets());$('#zae-kb-import').onclick=importKnowledgeFiles;$('#zae-kb-clear').onclick=clearKnowledgeBase;
+
+    function currentTicketId(){const m=location.pathname.match(/\/agent\/tickets\/(\d+)/);return m?Number(m[1]):null}
+    function refreshAssistVisibility(){assistToggle.style.display=currentTicketId()?'block':'none'}
+    refreshAssistVisibility();setInterval(refreshAssistVisibility,1000);refreshKnowledgeCount();
+
+    async function openDb(){return new Promise((resolve,reject)=>{const r=indexedDB.open(DB_NAME,DB_VERSION);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(STORE))r.result.createObjectStore(STORE,{keyPath:'id'})};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)})}
+    async function dbPutMany(items){const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readwrite'),store=tx.objectStore(STORE);items.forEach(x=>store.put(x));tx.oncomplete=()=>{db.close();resolve()};tx.onerror=()=>reject(tx.error)})}
+    async function dbGetAll(){const db=await openDb();return new Promise((resolve,reject)=>{const r=db.transaction(STORE,'readonly').objectStore(STORE).getAll();r.onsuccess=()=>{db.close();resolve(r.result||[])};r.onerror=()=>reject(r.error)})}
+    async function dbClear(){const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).clear();tx.oncomplete=()=>{db.close();resolve()};tx.onerror=()=>reject(tx.error)})}
+    async function refreshKnowledgeCount(){const all=await dbGetAll();state.kbCount=all.length;$('#zae-kb-count').textContent=`${all.length.toLocaleString()} tickets`}
+
+    async function importKnowledgeFiles(){const files=[...$('#zae-kb-files').files];if(!files.length){setStatus('Choose one or more JSONL files first.');return}try{let imported=[];for(const file of files){const text=await file.text();const rows=file.name.toLowerCase().endsWith('.json')&&!file.name.toLowerCase().endsWith('.jsonl')?JSON.parse(text):text.split(/\r?\n/).filter(Boolean).map((line,i)=>{try{return JSON.parse(line)}catch(e){throw new Error(`${file.name}: invalid JSON on line ${i+1}`)}});const arr=Array.isArray(rows)?rows:[rows];imported.push(...arr.filter(x=>x&&x.id).map(buildKnowledgeRecord))}await dbPutMany(imported);await refreshKnowledgeCount();setStatus(`Imported/updated ${imported.length.toLocaleString()} knowledge-base tickets.`)}catch(e){console.error(e);setStatus(`Knowledge-base import failed: ${e.message}`)}}
+    async function clearKnowledgeBase(){if(!confirm('Clear all locally stored historical Zendesk tickets?'))return;await dbClear();await refreshKnowledgeCount();setStatus('Knowledge base cleared.')}
+
+    function buildKnowledgeRecord(ticket){const conv=Array.isArray(ticket.conversation)?ticket.conversation:[];const resolutionSnippets=extractResolutionSnippets(ticket);const confirmed=hasResolutionConfirmation(conv);const evidenceQuality=resolutionSnippets.length?(confirmed?'strong':'moderate'):'weak';return {id:Number(ticket.id),subject:ticket.subject||'',description:ticket.description||'',status:ticket.status||'',group_name:ticket.group_name||'',tags:ticket.tags||[],url:ticket.url||`${location.origin}/agent/tickets/${ticket.id}`,conversation:conv,derived:ticket.derived||{},search_text:buildSearchText(ticket),resolution_snippets:resolutionSnippets,evidence_quality:evidenceQuality,imported_at:new Date().toISOString()}}
+    function buildSearchText(ticket){const conv=(ticket.conversation||[]).map(c=>c.body||'').join(' ');return [ticket.subject,ticket.description,(ticket.tags||[]).join(' '),conv].filter(Boolean).join(' ').slice(0,30000)}
+    function extractResolutionSnippets(ticket){const re=/(fixed|resolved|working now|works now|cause|caused by|because|due to|missing|added|updated|corrected|changed|removed|workaround|solution|skyldes|rettet|løst|virker nu|udgået|discontinued|price increase|nightly|daily run|sync)/i;return (ticket.conversation||[]).filter(c=>re.test(c.body||'')&&(c.author?.role==='agent'||c.author?.role==='admin'||c.public===false)).map(c=>({comment_id:c.id,created_at:c.created_at,public:c.public,author:c.author?.name||'',text:cleanSnippet(c.body||'',520)})).slice(-6)}
+    function hasResolutionConfirmation(conv){const re=/(works now|working now|fixed now|resolved|solved|issue is gone|not happening anymore|got solved|virker nu|løst|thank.*work)/i;return conv.some(c=>re.test(c.body||''))}
+    function cleanSnippet(text,max){return String(text).replace(/&nbsp;/g,' ').replace(/\s+/g,' ').trim().slice(0,max)}
+
+    async function analyzeCurrentTicket(){const id=currentTicketId();assistant.style.display='block';A('#zae-assistant-body').innerHTML='Loading current ticket and historical evidence…';if(!id){A('#zae-assistant-body').textContent='Open a Zendesk ticket first.';return}try{const kb=await dbGetAll();if(!kb.length){A('#zae-assistant-body').innerHTML='<div class="zae-warning">No historical knowledge base has been imported yet. Open Zendesk AI Export and import one or more JSONL exports first.</div>';return}const data=await apiGet(`/api/v2/tickets/${id}.json`);const ticket=data.ticket||data;ticket.conversation=await fetchTicketComments(id);const matches=findSimilar(ticket,kb.filter(x=>Number(x.id)!==id));renderEvidence(ticket,matches)}catch(e){console.error(e);A('#zae-assistant-body').textContent=`Analysis failed: ${e.message}`}}
+
+    function findSimilar(ticket,kb){const currentSubject=tokenFreq(ticket.subject||''),currentAll=tokenFreq(buildSearchText(ticket));return kb.map(item=>{const s=cosine(currentSubject,tokenFreq(item.subject||'')),a=cosine(currentAll,tokenFreq(item.search_text||''));const similarity=Math.min(1,s*.55+a*.45);const q=item.evidence_quality==='strong'?1:item.evidence_quality==='moderate'?.72:.32;return {...item,similarity,evidence_score:similarity*q}}).sort((x,y)=>y.evidence_score-x.evidence_score).slice(0,8)}
+    const STOP=new Set('the a an and or to of in on for with is are was were be been being this that it its i we you they our your my from at as by can could would should have has had do does did not no but if then than into about after before customer customers ticket tickets hi hello thanks thank best regards team bolia'.split(' '));
+    function tokenFreq(text){const m=new Map();String(text).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').match(/[a-z0-9_-]{3,}/g)?.forEach(t=>{if(!STOP.has(t))m.set(t,(m.get(t)||0)+1)});return m}
+    function cosine(a,b){let dot=0,aa=0,bb=0;a.forEach(v=>aa+=v*v);b.forEach(v=>bb+=v*v);a.forEach((v,k)=>dot+=v*(b.get(k)||0));return aa&&bb?dot/Math.sqrt(aa*bb):0}
+    function evidenceGate(matches){const usable=matches.filter(m=>m.evidence_quality!=='weak'&&m.similarity>=.16);const strong=usable.filter(m=>m.similarity>=.28);if(strong.length>=2||usable.some(m=>m.similarity>=.42&&m.evidence_quality==='strong'))return {level:'STRONG',allow:true};if(usable.some(m=>m.similarity>=.24))return {level:'MODERATE',allow:true};if(matches.some(m=>m.similarity>=.14))return {level:'WEAK',allow:false};return {level:'NONE',allow:false}}
+    function renderEvidence(ticket,matches){const gate=evidenceGate(matches),shown=matches.filter(m=>m.similarity>=.10).slice(0,5);let html=`<div class="zae-evidence-head"><div><strong>Ticket #${ticket.id}</strong><div>${escapeHtml(ticket.subject||'')}</div></div><span class="zae-evidence-level">Evidence: ${gate.level}</span></div>`;if(!gate.allow)html+=`<div class="zae-warning"><strong>No solution suggested.</strong><br>The imported history does not contain sufficiently strong, resolved precedent for this ticket. Related tickets are shown below only as references.</div>`;else{const supported=shown.filter(m=>m.evidence_quality!=='weak'&&m.resolution_snippets?.length);html+=`<div class="zae-card"><div class="zae-card-title">Evidence-backed direction</div><div>${supported.length?`Review the historical checks/resolutions below in order of evidence strength. The cause is <strong>not confirmed</strong> for the current ticket until you verify it.`:'No usable resolution text was found.'}</div></div>`}if(!shown.length)html+='<div class="zae-card">No related historical tickets found.</div>';for(const m of shown){html+=`<div class="zae-card"><div class="zae-card-title"><a class="zae-link" target="_blank" rel="noopener" href="${escapeHtml(m.url)}">#${m.id} — ${escapeHtml(m.subject)}</a></div><div class="zae-score">Similarity ${(m.similarity*100).toFixed(0)}% · historical evidence ${escapeHtml(m.evidence_quality)}</div>`;if(gate.allow&&m.evidence_quality!=='weak'&&m.resolution_snippets?.length){for(const sn of m.resolution_snippets.slice(-2))html+=`<div class="zae-snippet"><strong>${escapeHtml(sn.author||'Historical comment')}</strong>${sn.public===false?' · internal note':''}<br>${escapeHtml(sn.text)}</div>`}html+='</div>'}A('#zae-assistant-body').innerHTML=html}
+
+    async function findTickets(){if(state.running)return;state.running=true;state.cancelled=false;state.tickets=[];state.selectedTicketIds.clear();renderResults();setRunningUi(true);try{const raw=$('#zae-query').value.trim().replace(/\btype:ticket\b/gi,'').trim(),groupName=$('#zae-group').value.trim();let group=null,exactId=null,exactName=null;if(groupName){setStatus(`Resolving Zendesk group “${groupName}”…`);group=await resolveGroup(groupName);if(!group)throw new Error(`Could not find group “${groupName}”.`);exactId=group.id;exactName=group.name}const query=buildUnifiedQuery(raw,group);if(!query)throw new Error('Enter search terms or choose at least one structured filter.');const tickets=await searchExportTickets(query,exactId,exactName);state.tickets=tickets;tickets.forEach(t=>state.selectedTicketIds.add(t.id));renderResults();setStatus(`Found ${tickets.length.toLocaleString()} tickets.`)}catch(e){console.error(e);setStatus(`Error: ${e.message}`)}finally{state.running=false;setRunningUi(false)}}
+    function buildUnifiedQuery(raw,group){const field=$('#zae-date-field').value,from=$('#zae-from-date').value,to=$('#zae-to-date').value,parts=[];if(raw)parts.push(raw);if(group)parts.push(`group:${group.id}`);if(from)parts.push(`${field}>=${from}`);if(to)parts.push(`${field}<=${to}`);return parts.join(' ').trim()}
+    async function resolveGroup(name){const key=name.toLowerCase();if(state.groupCache.has(key))return state.groupCache.get(key);const d=await apiGet(`/api/v2/groups/autocomplete.json?name=${encodeURIComponent(name)}`),g=(d.groups||[]).find(x=>(x.name||'').toLowerCase()===key)||null;if(g)state.groupCache.set(key,g);return g}
+    async function searchExportTickets(query,exactGroupId,exactGroupName){const out=[],seen=new Set(),cursors=new Set();let after=null,page=0;while(!state.cancelled){page++;const p=new URLSearchParams({query,'filter[type]':'ticket','page[size]':'100'});if(after)p.set('page[after]',after);const d=await apiGet(`/api/v2/search/export.json?${p}`);for(const t of d.results||[]){if(exactGroupId&&Number(t.group_id)!==Number(exactGroupId)||seen.has(t.id))continue;seen.add(t.id);out.push(normalizeSearchTicket(t,exactGroupName))}setStatus(`Searching Zendesk… ${out.length.toLocaleString()} tickets loaded (page ${page}).`);const meta=d.meta||{},links=d.links||{},hasMore=[true,'true',1,'1'].includes(meta.has_more);if(!hasMore)break;let next=meta.after_cursor||meta.after||null;if(!next&&links.next){try{next=new URL(links.next,location.origin).searchParams.get('page[after]')}catch{}}if(!next||next===after||cursors.has(next))break;cursors.add(next);after=next}return out}
+    function normalizeSearchTicket(t,groupName){return {id:t.id,created_at:t.created_at||null,updated_at:t.updated_at||null,solved_at:t.solved_at||null,status:t.status||'',subject:t.subject||'',description:t.description||'',group_id:t.group_id||null,group_name:groupName||'',assignee_id:t.assignee_id||null,requester_id:t.requester_id||null,submitter_id:t.submitter_id||null,priority:t.priority||null,type:t.type||null,tags:t.tags||[],via:t.via||null,custom_fields:t.custom_fields||[],ticket_form_id:t.ticket_form_id||null,brand_id:t.brand_id||null,conversation:null,conversation_loaded:false,conversation_error:null,url:`${location.origin}/agent/tickets/${t.id}`}}
+
+    async function loadSelectedConversations(){if(state.running)return;const tickets=getSelectedTickets();if(!tickets.length)return;state.running=true;state.cancelled=false;setRunningUi(true);try{await ensureConversationsLoaded(tickets);renderResults();setStatus(`Conversations processed for ${tickets.length.toLocaleString()} selected tickets.`)}finally{state.running=false;setRunningUi(false)}}
+    async function ensureConversationsLoaded(tickets){const pending=tickets.filter(t=>!t.conversation_loaded&&!t.conversation_error);let cursor=0,done=tickets.length-pending.length;const workers=Array.from({length:Math.min(COMMENT_CONCURRENCY,pending.length)},async()=>{while(!state.cancelled){const i=cursor++;if(i>=pending.length)return;const t=pending[i];try{t.conversation=await fetchTicketComments(t.id);t.conversation_loaded=true;t.conversation_error=null}catch(e){t.conversation=[];t.conversation_error=e.message}done++;setStatus(`Loading conversations… ${done}/${tickets.length}`)}});await Promise.all(workers)}
+    async function fetchTicketComments(ticketId){const comments=[],users=new Map(),seen=new Set();let next=`/api/v2/tickets/${ticketId}/comments.json?include=users&include_inline_images=true&page[size]=100&sort_order=asc`;while(next&&!state.cancelled){const d=await apiGet(next);for(const u of d.users||[])users.set(Number(u.id),{id:u.id,name:u.name||'',email:u.email||'',role:u.role||''});for(const c of d.comments||[])comments.push(normalizeComment(c,users.get(Number(c.author_id))||null));const meta=d.meta||{},links=d.links||{},more=[true,'true',1,'1'].includes(meta.has_more);if(!more)break;let candidate=links.next||null;if(!candidate&&(meta.after_cursor||meta.after))candidate=`/api/v2/tickets/${ticketId}/comments.json?include=users&include_inline_images=true&page[size]=100&sort_order=asc&page[after]=${encodeURIComponent(meta.after_cursor||meta.after)}`;if(!candidate||seen.has(candidate))break;seen.add(candidate);next=toSameOriginApiPath(candidate)}return comments}
+    function normalizeComment(c,author){const inc=$('#zae-attachments').value==='urls';return {id:c.id,created_at:c.created_at||null,public:c.public===true,type:c.type||'Comment',author_id:c.author_id||null,author,body:c.plain_body||c.body||'',via:c.via||null,attachments:inc?(c.attachments||[]).map(a=>({id:a.id||null,file_name:a.file_name||a.name||'',content_type:a.content_type||'',size:a.size||null,content_url:a.content_url||''})):[]}}
+    function toSameOriginApiPath(v){const u=new URL(v,location.origin);if(u.origin!==location.origin)throw new Error('Unexpected Zendesk pagination host.');return u.pathname+u.search}
+
+    async function exportSelectedJsonl(){if(state.running)return;const selected=getSelectedTickets();if(!selected.length)return;state.running=true;state.cancelled=false;setRunningUi(true);try{await ensureConversationsLoaded(selected);if(state.cancelled)return;const mode=$('#zae-comments').value;exportJsonl(selected.map(t=>buildExportTicket(t,mode)));setStatus(`Exported ${selected.length.toLocaleString()} tickets with conversations.`)}finally{state.running=false;setRunningUi(false)}}
+    function buildExportTicket(t,mode){const conversation=Array.isArray(t.conversation)?t.conversation.filter(c=>mode==='all'||c.public):[];return {...t,conversation,derived:{conversation_length:conversation.length,public_comment_count:conversation.filter(c=>c.public).length,internal_note_count:conversation.filter(c=>!c.public).length}}}
+    async function apiGet(url,attempt=0){const r=await fetch(url,{credentials:'same-origin',headers:{Accept:'application/json'}});if(r.status===429&&attempt<5){const sec=Math.max(1,Number(r.headers.get('Retry-After'))||2);await new Promise(res=>setTimeout(res,sec*1000));return apiGet(url,attempt+1)}if(!r.ok){let detail='';try{const b=await r.json();detail=b.description||b.error||b.message||''}catch{}throw new Error(`Zendesk API returned ${r.status}${detail?`: ${detail}`:''}`)}return r.json()}
+
+    function renderResults(){const tbody=$('#zae-results');tbody.textContent='';for(const t of state.tickets){const tr=document.createElement('tr'),date=t.solved_at||t.updated_at||t.created_at||'',conv=t.conversation_loaded?`${(t.conversation||[]).length} comments`:t.conversation_error?'Failed':'Not loaded';tr.innerHTML=`<td><input class="zae-row-check" type="checkbox" data-id="${t.id}" ${state.selectedTicketIds.has(t.id)?'checked':''}></td><td><a class="zae-link" href="${escapeHtml(t.url)}" target="_blank">${t.id}</a></td><td>${escapeHtml(formatDate(date))}</td><td>${escapeHtml(t.subject)}</td><td><span class="zae-pill">${escapeHtml(t.status)}</span></td><td>${escapeHtml(t.group_name||t.group_id||'')}</td><td>${escapeHtml(conv)}</td>`;tbody.appendChild(tr)}panel.querySelectorAll('.zae-row-check').forEach(c=>c.onchange=()=>{const id=Number(c.dataset.id);c.checked?state.selectedTicketIds.add(id):state.selectedTicketIds.delete(id);updateSelectionUi()});updateSelectionUi()}
+    function selectAll(){state.tickets.forEach(t=>state.selectedTicketIds.add(t.id));panel.querySelectorAll('.zae-row-check').forEach(c=>c.checked=true);updateSelectionUi()}function selectNone(){state.selectedTicketIds.clear();panel.querySelectorAll('.zae-row-check').forEach(c=>c.checked=false);updateSelectionUi()}function getSelectedTickets(){return state.tickets.filter(t=>state.selectedTicketIds.has(t.id))}
+    function updateSelectionUi(){const has=state.tickets.length>0,sel=state.selectedTicketIds.size;$('#zae-load-comments').disabled=!sel||state.running;$('#zae-export-jsonl').disabled=!sel||state.running;$('#zae-export-csv').disabled=!sel||state.running;$('#zae-select-all').disabled=!has||state.running;$('#zae-select-none').disabled=!has||state.running;$('#zae-check-all').disabled=!has||state.running;$('#zae-check-all').checked=has&&sel===state.tickets.length}
+    function setRunningUi(r){$('#zae-find').disabled=r;$('#zae-cancel').disabled=!r;updateSelectionUi()}function setStatus(m){$('#zae-status').textContent=m}
+    function exportJsonl(tickets){downloadBlob(tickets.map(t=>JSON.stringify(t)).join('\n'),`zendesk-tickets-${dateStamp()}.jsonl`,'application/x-ndjson;charset=utf-8')}function exportCsv(tickets){const h=['id','created_at','updated_at','solved_at','status','subject','group_id','group_name','assignee_id','priority','type','tags','conversation_loaded','conversation_count','url'],rows=[h.map(csvCell).join(',')];for(const t of tickets){const v={...t,tags:(t.tags||[]).join(' | '),conversation_count:Array.isArray(t.conversation)?t.conversation.length:''};rows.push(h.map(k=>csvCell(v[k])).join(','))}downloadBlob(rows.join('\n'),`zendesk-tickets-${dateStamp()}.csv`,'text/csv;charset=utf-8')}function csvCell(v){const s=v==null?'':String(v);return `"${s.replaceAll('"','""')}"`}function downloadBlob(c,n,t){const b=new Blob([c],{type:t}),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=n;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1000)}
+    function formatDate(v){if(!v)return'';const d=new Date(v);return Number.isNaN(d.getTime())?v:d.toLocaleString()}function escapeHtml(v){return String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;')}function dateStamp(){return new Date().toISOString().slice(0,10)}
 })();
