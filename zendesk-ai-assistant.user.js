@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.1.1
+// @version      0.1.2
 // @description  Chat with a Supabase-backed Zendesk support knowledge base directly inside Zendesk.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -36,7 +36,7 @@
       #${APP_ID} *{box-sizing:border-box}.zaec-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 13px;border-bottom:1px solid rgba(148,210,168,.18)}
       .zaec-title{font-size:15px;font-weight:700}.zaec-sub{font-size:11px;color:rgba(255,255,255,.58)}.zaec-head-actions,.zaec-tools,.zaec-input-row{display:flex;gap:7px;align-items:center}
       #${APP_ID} button{border:1px solid rgba(255,255,255,.14);border-radius:6px;background:rgba(255,255,255,.08);color:#fff;padding:7px 9px;cursor:pointer}#${APP_ID} button:hover{background:rgba(255,255,255,.13)}#${APP_ID} button:disabled{opacity:.45;cursor:default}
-      .zaec-tools{padding:8px 11px;border-bottom:1px solid rgba(148,210,168,.14);flex-wrap:wrap}.zaec-primary{background:rgba(117,190,139,.20)!important;border-color:rgba(155,229,178,.35)!important}.zaec-status{margin-left:auto;color:rgba(255,255,255,.56);font-size:11px;max-width:240px;text-align:right}
+      .zaec-tools{padding:8px 11px;border-bottom:1px solid rgba(148,210,168,.14);flex-wrap:wrap}.zaec-primary{background:rgba(117,190,139,.20)!important;border-color:rgba(155,229,178,.35)!important}.zaec-status{margin-left:auto;color:rgba(255,255,255,.56);font-size:11px;max-width:300px;text-align:right;overflow-wrap:anywhere}
       .zaec-chat{flex:1;min-height:0;overflow:auto;padding:12px}.zaec-msg{margin:0 0 11px;padding:9px 10px;border-radius:9px;white-space:pre-wrap;overflow-wrap:anywhere}.zaec-user{margin-left:45px;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.10)}.zaec-assistant{margin-right:28px;background:rgba(37,84,57,.54);border:1px solid rgba(148,210,168,.16)}
       .zaec-role{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.48);margin-bottom:4px}.zaec-sources{margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,.10);display:flex;gap:5px;flex-wrap:wrap}.zaec-source{display:inline-flex;padding:3px 6px;border-radius:999px;border:1px solid rgba(155,229,178,.22);background:rgba(117,190,139,.12);color:#dff6e6;text-decoration:none;font-size:11px}
       .zaec-empty{padding:20px 12px;color:rgba(255,255,255,.58);text-align:center}.zaec-compose{padding:10px;border-top:1px solid rgba(148,210,168,.18)}#${APP_ID} textarea{width:100%;min-height:76px;max-height:180px;resize:vertical;border:1px solid rgba(255,255,255,.13);border-radius:8px;background:rgba(0,0,0,.18);color:#fff;padding:9px;outline:none}.zaec-input-row{margin-top:7px;justify-content:flex-end}.zaec-error{color:#ffd3c8}.zaec-ok{color:#d9f5e2}
@@ -127,6 +127,13 @@
         return { id: Number(t.id), subject: t.subject || '', description: t.description || '', status: t.status || '', group_name: '', tags: t.tags || [], created_at: t.created_at || null, updated_at: t.updated_at || null, solved_at: t.solved_at || null, url: `${location.origin}/agent/tickets/${id}`, conversation: await fetchComments(id) };
     }
 
+    function extractSupabaseError(data, status) {
+        const firstFailure = Array.isArray(data?.results) ? data.results.find(row => row?.ok === false) : null;
+        const stage = firstFailure?.stage ? ` [${firstFailure.stage}]` : '';
+        const detail = firstFailure?.error || data?.error || data?.message || '';
+        return detail ? `Supabase ${status}${stage}: ${detail}` : `Supabase returned HTTP ${status || 'unknown'}`;
+    }
+
     function callSupabase(endpoint, body) {
         const token = requireToken();
         return new Promise((resolve, reject) => {
@@ -140,7 +147,7 @@
                     let data = null;
                     try { data = JSON.parse(response.responseText || '{}'); } catch {}
                     if (response.status < 200 || response.status >= 300) {
-                        reject(new Error(data?.error || `Supabase returned HTTP ${response.status || 'unknown'}`));
+                        reject(new Error(extractSupabaseError(data, response.status)));
                         return;
                     }
                     resolve(data || {});
