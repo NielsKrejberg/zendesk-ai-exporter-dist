@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.6.0
+// @version      0.6.2
 // @description  Zendesk AI support assistant with built-in ticket search, export, Supabase KB upload, and versioned reference knowledge.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -55,9 +55,9 @@
       .zaec-primary{background:rgba(117,190,139,.20)!important;border-color:rgba(155,229,178,.35)!important}
       .zaec-tabs{padding:7px 11px;border-bottom:1px solid rgba(148,210,168,.14)}.zaec-tab{min-width:74px}.zaec-tab.active{background:rgba(117,190,139,.22)!important;border-color:rgba(155,229,178,.38)!important}
       .zaec-view{flex:1;min-height:0}.zaec-chat-view{display:flex;flex-direction:column}.zaec-export-view{display:none;flex-direction:column;min-height:0}
-      .zaec-tools{padding:8px 11px;border-bottom:1px solid rgba(148,210,168,.14);flex-wrap:wrap}.zaec-status{margin-left:auto;color:rgba(255,255,255,.56);font-size:11px;max-width:420px;text-align:right;overflow-wrap:anywhere}.zaec-error{color:#ffd3c8}.zaec-ok{color:#d9f5e2}
+      .zaec-tools{padding:8px 11px;border-bottom:1px solid rgba(148,210,168,.14);flex-wrap:wrap}.zaec-status{margin-left:auto;color:rgba(255,255,255,.56);font-size:11px;max-width:420px;text-align:right;overflow-wrap:anywhere}.zaec-status-panel{min-height:30px;margin:0 0 8px;padding:6px 8px;display:flex;align-items:center;gap:8px;border:1px solid rgba(148,210,168,.12);border-radius:7px;background:rgba(0,0,0,.10);color:rgba(255,255,255,.66);font-size:11px;overflow-wrap:anywhere;transition:background .18s ease,border-color .18s ease}.zaec-status-panel.zaec-working{background:rgba(117,190,139,.10);border-color:rgba(155,229,178,.24);color:#dff6e6}.zaec-status-panel.zaec-working::before{content:'';width:13px;height:13px;flex:0 0 13px;border:2px solid rgba(223,246,230,.22);border-top-color:#dff6e6;border-radius:50%;animation:zaec-spin .8s linear infinite}.zaec-status-panel.zaec-working::after{content:'•••';margin-left:auto;letter-spacing:2px;animation:zaec-pulse 1.2s ease-in-out infinite}.zaec-error{color:#ffd3c8}.zaec-ok{color:#d9f5e2}@keyframes zaec-spin{to{transform:rotate(360deg)}}@keyframes zaec-pulse{0%,100%{opacity:.25}50%{opacity:1}}
       .zaec-chat{flex:1;min-height:0;overflow:auto;padding:12px}.zaec-msg{margin:0 0 11px;padding:9px 10px;border-radius:9px;white-space:pre-wrap;overflow-wrap:anywhere}.zaec-user{margin-left:45px;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.10)}.zaec-assistant{margin-right:28px;background:rgba(37,84,57,.54);border:1px solid rgba(148,210,168,.16)}
-      .zaec-role{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.48);margin-bottom:4px}.zaec-sources{margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,.10);display:flex;gap:5px;flex-wrap:wrap}.zaec-source{display:inline-flex;padding:3px 6px;border-radius:999px;border:1px solid rgba(155,229,178,.22);background:rgba(117,190,139,.12);color:#dff6e6;text-decoration:none;font-size:11px}.zaec-reference-source{border-style:dashed;background:rgba(172,214,185,.08)}
+      .zaec-role{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.48);margin-bottom:4px}.zaec-sources-details{margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,.10);white-space:normal}.zaec-sources-details summary{display:flex;align-items:center;gap:6px;width:max-content;max-width:100%;cursor:pointer;color:rgba(255,255,255,.66);font-size:11px;user-select:none;list-style:none}.zaec-sources-details summary::-webkit-details-marker{display:none}.zaec-sources-details summary::before{content:'▶';font-size:8px;transition:transform .14s ease}.zaec-sources-details[open] summary::before{transform:rotate(90deg)}.zaec-sources{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}.zaec-source{display:inline-flex;padding:3px 6px;border-radius:999px;border:1px solid rgba(155,229,178,.22);background:rgba(117,190,139,.12);color:#dff6e6;text-decoration:none;font-size:11px}.zaec-reference-source{border-style:dashed;background:rgba(172,214,185,.08)}
       .zaec-empty{padding:20px 12px;color:rgba(255,255,255,.58);text-align:center}.zaec-compose{padding:10px;border-top:1px solid rgba(148,210,168,.18)}#${APP_ID} textarea{resize:vertical}.zaec-input-row{margin-top:7px;justify-content:flex-end}
       .zaec-export-body{padding:10px 12px 12px;overflow:auto;display:flex;flex-direction:column;min-height:0;height:100%}.zaec-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 10px}.zaec-section{margin-top:9px;flex:0 0 auto}.zaec-actions{flex-wrap:wrap;margin-top:9px}
       .zaec-reference-box{padding:9px 10px;border:1px solid rgba(148,210,168,.18);border-radius:8px;background:rgba(0,0,0,.11)}.zaec-reference-row{margin-top:7px;flex-wrap:wrap}.zaec-reference-row input[type=file]{flex:1;min-width:260px}
@@ -78,9 +78,9 @@
       <div class="zaec-head"><div><div class="zaec-title">Zendesk AI Assistant</div><div class="zaec-sub" id="zaec-ticket-label">Ready</div></div><div class="zaec-head-actions"><button id="zaec-settings" title="Configure access token">⚙</button><button id="zaec-close">×</button></div></div>
       <div class="zaec-tabs"><button id="zaec-tab-chat" class="zaec-tab active">Chat</button><button id="zaec-tab-export" class="zaec-tab">Export</button></div>
       <div id="zaec-view-chat" class="zaec-view zaec-chat-view">
-        <div class="zaec-tools"><button id="zaec-add-kb" class="zaec-primary">Add current ticket to KB</button><button id="zaec-clear">Clear chat</button><span class="zaec-status" id="zaec-status">Ready</span></div>
+        <div class="zaec-tools"><button id="zaec-add-kb" class="zaec-primary">Add current ticket to KB</button><button id="zaec-clear">Clear chat</button></div>
         <div class="zaec-chat" id="zaec-chat"><div class="zaec-empty">Ask about the current ticket or use Export to add historical tickets and reference knowledge.</div></div>
-        <div class="zaec-compose"><textarea id="zaec-input" placeholder="Ask about this ticket…">Help me solve this</textarea><div class="zaec-input-row"><button id="zaec-send" class="zaec-primary">Send</button></div></div>
+        <div class="zaec-compose"><div class="zaec-status-panel zaec-ok" id="zaec-status" role="status" aria-live="polite">Ready</div><textarea id="zaec-input" placeholder="Ask about this ticket…">Help me solve this</textarea><div class="zaec-input-row"><button id="zaec-send" class="zaec-primary">Send</button></div></div>
       </div>
       <div id="zaec-view-export" class="zaec-view zaec-export-view">
         <div class="zaec-export-body">
@@ -302,13 +302,30 @@
         try {
             setStatus('Loading ticket…');
             const ticket = await loadCurrentTicket();
-            setStatus('Searching knowledge base…');
-            const history = state.messages.slice(0, -1).slice(-4).map(({ role, content }) => ({ role, content }));
-            const result = await callSupabase(CHAT_ENDPOINT, { ticket, message: text, history });
-            state.messages.push({ role: 'assistant', content: result.answer || '', sources: result.sources || [], references: result.references || [] });
-            renderChat();
-            const refCount = result.references?.length || 0;
-            setStatus(`${result.sources?.length || 0} historical tickets · ${refCount} reference records`, true);
+            const progressSteps = [
+                'Searching knowledge base…',
+                'Comparing previous Zendesk tickets…',
+                'Checking PIM and website reference data…',
+                'Preparing answer…'
+            ];
+            let progressIndex = 0;
+            setStatus(progressSteps[progressIndex]);
+            const progressTimer = setInterval(() => {
+                if (!state.busy) return;
+                progressIndex = (progressIndex + 1) % progressSteps.length;
+                setStatus(progressSteps[progressIndex]);
+            }, 1800);
+            try {
+                const history = state.messages.slice(0, -1).slice(-4).map(({ role, content }) => ({ role, content }));
+                const result = await callSupabase(CHAT_ENDPOINT, { ticket, message: text, history });
+                clearInterval(progressTimer);
+                state.messages.push({ role: 'assistant', content: result.answer || '', sources: result.sources || [], references: result.references || [] });
+                renderChat();
+                const refCount = result.references?.length || 0;
+                setStatus(`${result.sources?.length || 0} historical tickets · ${refCount} reference records`, true);
+            } finally {
+                clearInterval(progressTimer);
+            }
         } catch (e) {
             state.messages.push({ role: 'assistant', content: `Error: ${e.message || String(e)}`, error: true, sources: [], references: [] });
             renderChat();
@@ -325,6 +342,13 @@
             const role = document.createElement('div'); role.className = 'zaec-role'; role.textContent = msg.role === 'user' ? 'You' : 'Assistant';
             const body = document.createElement('div'); renderAnswer(body, msg.content || ''); box.append(role, body);
             if ((Array.isArray(msg.sources) && msg.sources.length) || (Array.isArray(msg.references) && msg.references.length)) {
+                const details = document.createElement('details'); details.className = 'zaec-sources-details';
+                const summary = document.createElement('summary');
+                const ticketCount = msg.sources?.length || 0, referenceCount = msg.references?.length || 0;
+                const parts = [];
+                if (ticketCount) parts.push(`${ticketCount} Zendesk ticket${ticketCount === 1 ? '' : 's'}`);
+                if (referenceCount) parts.push(`${referenceCount} reference${referenceCount === 1 ? '' : 's'}`);
+                summary.textContent = `Sources · ${parts.join(' · ')}`;
                 const sources = document.createElement('div'); sources.className = 'zaec-sources';
                 for (const s of msg.sources || []) {
                     const a = document.createElement('a'); a.className = 'zaec-source'; a.href = s.url || `${location.origin}/agent/tickets/${s.ticketId}`; a.target = '_blank'; a.rel = 'noopener'; a.textContent = `#${s.ticketId}`; a.title = `${s.subject || ''} · score ${Math.round(Number(s.score || 0) * 100)}%`; sources.appendChild(a);
@@ -332,7 +356,8 @@
                 for (const r of msg.references || []) {
                     const span = document.createElement('span'); span.className = 'zaec-source zaec-reference-source'; span.textContent = `${r.sourceTitle || r.sourceKey} · ${r.snapshotDate}`; span.title = `${r.recordKey || ''}${r.score != null ? ` · score ${Math.round(Number(r.score || 0) * 100)}%` : ''}`; sources.appendChild(span);
                 }
-                box.appendChild(sources);
+                details.append(summary, sources);
+                box.appendChild(details);
             }
             if (msg.error) box.classList.add('zaec-error');
             el.appendChild(box);
@@ -352,7 +377,7 @@
     function clearChat() { state.messages = []; renderChat(); setStatus('Ready', true); }
     function sumRedactions(r) { return Object.values(r || {}).reduce((a, b) => a + Number(b || 0), 0); }
     function setBusy(value) { state.busy = value; $('#zaec-send').disabled = value; $('#zaec-add-kb').disabled = value || !currentTicketId(); $('#zaec-upload-reference').disabled = value; }
-    function setStatus(text, ok = null) { const el = $('#zaec-status'); el.textContent = text; el.className = `zaec-status ${ok === true ? 'zaec-ok' : ok === false ? 'zaec-error' : ''}`; }
+    function setStatus(text, ok = null) { const el = $('#zaec-status'); el.textContent = text; el.className = `zaec-status-panel ${state.busy && ok === null ? 'zaec-working' : ''} ${ok === true ? 'zaec-ok' : ok === false ? 'zaec-error' : ''}`.trim(); }
     function setExportStatus(text, ok = null) { const el = $('#zaec-export-status'); el.textContent = text; el.className = `zaec-status ${ok === true ? 'zaec-ok' : ok === false ? 'zaec-error' : ''}`; }
 
     function toDateInputValue(date) { const y=date.getFullYear(),m=String(date.getMonth()+1).padStart(2,'0'),d=String(date.getDate()).padStart(2,'0'); return `${y}-${m}-${d}`; }
