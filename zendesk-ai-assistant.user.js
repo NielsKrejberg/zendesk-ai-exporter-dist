@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.4.0
+// @version      0.4.1
 // @description  Zendesk AI support assistant with built-in ticket search, export and Supabase knowledge-base upload.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -85,7 +85,7 @@
         <div class="zaec-tools"><button id="zaec-add-kb" class="zaec-primary">Add current ticket to KB</button><button id="zaec-local-evidence-btn">Local evidence</button><button id="zaec-clear">Clear chat</button><span class="zaec-status" id="zaec-status">Ready</span></div>
         <div id="zaec-local-evidence" class="zaec-local-evidence"></div>
         <div class="zaec-chat" id="zaec-chat"><div class="zaec-empty">Ask about the current ticket or use Export to add historical tickets.</div></div>
-        <div class="zaec-compose"><textarea id="zaec-input" placeholder="Ask about this ticket…"></textarea><div class="zaec-input-row"><button id="zaec-send" class="zaec-primary">Send</button></div></div>
+        <div class="zaec-compose"><textarea id="zaec-input" placeholder="Ask about this ticket…">Help me solve this</textarea><div class="zaec-input-row"><button id="zaec-send" class="zaec-primary">Send</button></div></div>
       </div>
       <div id="zaec-view-export" class="zaec-view zaec-export-view">
         <div class="zaec-export-body">
@@ -114,7 +114,12 @@
     $('#zaec-send').onclick = sendMessage;
     $('#zaec-tab-chat').onclick = () => switchView('chat');
     $('#zaec-tab-export').onclick = () => switchView('export');
-    $('#zaec-input').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendMessage(); });
+    $('#zaec-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
+    });
     $('#zaec-find').onclick = findTickets;
     $('#zaec-load-comments').onclick = loadSelectedConversations;
     $('#zaec-cancel').onclick = () => { state.exportCancelled = true; setExportStatus('Cancellation requested…'); };
