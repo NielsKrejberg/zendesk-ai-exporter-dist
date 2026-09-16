@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.2.0
+// @version      0.3.0
 // @description  Chat with a Supabase-backed Zendesk support knowledge base directly inside Zendesk.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -29,21 +29,26 @@
 
     if (document.getElementById(APP_ID)) return;
 
-    const state = { ticketId: null, messages: [], busy: false };
+    const state = { ticketId: null, messages: [], busy: false, view: 'chat', exporterEmbedded: false };
 
     const style = document.createElement('style');
     style.textContent = `
       #${APP_ID},#${APP_ID}-toggle{font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#fff}
       #${APP_ID}-toggle{position:fixed;z-index:2147483644;top:61px;right:18px;border:1px solid rgba(155,229,178,.28);border-radius:7px;background:rgba(20,63,42,.86);backdrop-filter:blur(12px);color:#fff;padding:8px 11px;cursor:pointer;box-shadow:0 8px 28px rgba(0,0,0,.25);display:none}
-      #${APP_ID}{position:fixed;z-index:2147483646;top:12px;right:12px;width:min(560px,calc(100vw - 24px));height:calc(100vh - 24px);display:none;flex-direction:column;background:rgba(15,48,32,.93);border:1px solid rgba(148,210,168,.25);border-radius:12px;box-shadow:0 16px 44px rgba(0,0,0,.38);backdrop-filter:blur(14px);overflow:hidden}
-      #${APP_ID} *{box-sizing:border-box}.zaec-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 13px;border-bottom:1px solid rgba(148,210,168,.18)}
-      .zaec-title{font-size:15px;font-weight:700}.zaec-sub{font-size:11px;color:rgba(255,255,255,.58)}.zaec-head-actions,.zaec-tools,.zaec-input-row{display:flex;gap:7px;align-items:center}
+      #${APP_ID}{position:fixed;z-index:2147483646;top:12px;right:12px;width:min(560px,calc(100vw - 24px));height:calc(100vh - 24px);display:none;flex-direction:column;background:rgba(15,48,32,.93);border:1px solid rgba(148,210,168,.25);border-radius:12px;box-shadow:0 16px 44px rgba(0,0,0,.38);backdrop-filter:blur(14px);overflow:hidden;transition:width .18s ease}
+      #${APP_ID}.zaec-export-mode{width:min(1180px,calc(100vw - 24px))}
+      #${APP_ID} *{box-sizing:border-box}.zaec-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 13px;border-bottom:1px solid rgba(148,210,168,.18);flex:0 0 auto}
+      .zaec-title{font-size:15px;font-weight:700}.zaec-sub{font-size:11px;color:rgba(255,255,255,.58)}.zaec-head-actions,.zaec-tools,.zaec-input-row,.zaec-tabs{display:flex;gap:7px;align-items:center}
       #${APP_ID} button{border:1px solid rgba(255,255,255,.14);border-radius:6px;background:rgba(255,255,255,.08);color:#fff;padding:7px 9px;cursor:pointer}#${APP_ID} button:hover{background:rgba(255,255,255,.13)}#${APP_ID} button:disabled{opacity:.45;cursor:default}
+      .zaec-tabs{padding:7px 11px;border-bottom:1px solid rgba(148,210,168,.14)}.zaec-tab{min-width:74px}.zaec-tab.active{background:rgba(117,190,139,.22)!important;border-color:rgba(155,229,178,.38)!important}
+      .zaec-view{flex:1;min-height:0}.zaec-chat-view{display:flex;flex-direction:column}.zaec-export-view{display:none;overflow:hidden}.zaec-export-host{height:100%;min-height:0}.zaec-export-missing{padding:20px;color:rgba(255,255,255,.62);text-align:center}
       .zaec-tools{padding:8px 11px;border-bottom:1px solid rgba(148,210,168,.14);flex-wrap:wrap}.zaec-primary{background:rgba(117,190,139,.20)!important;border-color:rgba(155,229,178,.35)!important}.zaec-status{margin-left:auto;color:rgba(255,255,255,.56);font-size:11px;max-width:300px;text-align:right;overflow-wrap:anywhere}
       .zaec-chat{flex:1;min-height:0;overflow:auto;padding:12px}.zaec-msg{margin:0 0 11px;padding:9px 10px;border-radius:9px;white-space:pre-wrap;overflow-wrap:anywhere}.zaec-user{margin-left:45px;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.10)}.zaec-assistant{margin-right:28px;background:rgba(37,84,57,.54);border:1px solid rgba(148,210,168,.16)}
       .zaec-role{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.48);margin-bottom:4px}.zaec-sources{margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,.10);display:flex;gap:5px;flex-wrap:wrap}.zaec-source{display:inline-flex;padding:3px 6px;border-radius:999px;border:1px solid rgba(155,229,178,.22);background:rgba(117,190,139,.12);color:#dff6e6;text-decoration:none;font-size:11px}
       .zaec-empty{padding:20px 12px;color:rgba(255,255,255,.58);text-align:center}.zaec-compose{padding:10px;border-top:1px solid rgba(148,210,168,.18)}#${APP_ID} textarea{width:100%;min-height:76px;max-height:180px;resize:vertical;border:1px solid rgba(255,255,255,.13);border-radius:8px;background:rgba(0,0,0,.18);color:#fff;padding:9px;outline:none}.zaec-input-row{margin-top:7px;justify-content:flex-end}.zaec-error{color:#ffd3c8}.zaec-ok{color:#d9f5e2}
-      @media(max-width:700px){#${APP_ID}{top:6px;right:6px;width:calc(100vw - 12px);height:calc(100vh - 12px)}}`;
+      #${APP_ID} #${EXPORTER_ID}{position:relative!important;inset:auto!important;width:100%!important;height:100%!important;display:block!important;z-index:auto!important;border:0!important;border-radius:0!important;box-shadow:none!important;background:transparent!important;backdrop-filter:none!important;overflow:hidden!important}
+      #${APP_ID} #${EXPORTER_ID}>.zae-header{display:none!important}#${APP_ID} #${EXPORTER_ID} .zae-body{height:100%!important;padding:9px 10px 10px!important}#${APP_ID} #${EXPORTER_ID} .zae-table-wrap{min-height:180px}
+      @media(max-width:700px){#${APP_ID},#${APP_ID}.zaec-export-mode{top:6px;right:6px;width:calc(100vw - 12px);height:calc(100vh - 12px)}}`;
     document.head.appendChild(style);
 
     const toggle = document.createElement('button');
@@ -55,14 +60,18 @@
     panel.id = APP_ID;
     panel.innerHTML = `
       <div class="zaec-head"><div><div class="zaec-title">Zendesk AI Assistant</div><div class="zaec-sub" id="zaec-ticket-label">Ready</div></div><div class="zaec-head-actions"><button id="zaec-settings" title="Configure access token">⚙</button><button id="zaec-close">×</button></div></div>
-      <div class="zaec-tools">
-        <button id="zaec-add-kb" class="zaec-primary">Add current ticket to KB</button>
-        <button id="zaec-add-exporter" class="zaec-primary">Upload exporter selection to KB</button>
-        <button id="zaec-clear">Clear chat</button>
-        <span class="zaec-status" id="zaec-status">Ready</span>
+      <div class="zaec-tabs"><button id="zaec-tab-chat" class="zaec-tab active">Chat</button><button id="zaec-tab-export" class="zaec-tab">Export</button></div>
+      <div id="zaec-view-chat" class="zaec-view zaec-chat-view">
+        <div class="zaec-tools">
+          <button id="zaec-add-kb" class="zaec-primary">Add current ticket to KB</button>
+          <button id="zaec-add-exporter" class="zaec-primary">Upload exporter selection to KB</button>
+          <button id="zaec-clear">Clear chat</button>
+          <span class="zaec-status" id="zaec-status">Ready</span>
+        </div>
+        <div class="zaec-chat" id="zaec-chat"><div class="zaec-empty">Ask about the current ticket or upload selected tickets from Zendesk AI Exporter.</div></div>
+        <div class="zaec-compose"><textarea id="zaec-input" placeholder="Ask about this ticket…"></textarea><div class="zaec-input-row"><button id="zaec-send" class="zaec-primary">Send</button></div></div>
       </div>
-      <div class="zaec-chat" id="zaec-chat"><div class="zaec-empty">Ask about the current ticket or upload selected tickets from Zendesk AI Exporter.</div></div>
-      <div class="zaec-compose"><textarea id="zaec-input" placeholder="Ask about this ticket…"></textarea><div class="zaec-input-row"><button id="zaec-send" class="zaec-primary">Send</button></div></div>`;
+      <div id="zaec-view-export" class="zaec-view zaec-export-view"><div id="zaec-export-host" class="zaec-export-host"><div class="zaec-export-missing">Loading Zendesk AI Exporter…</div></div></div>`;
     document.body.appendChild(panel);
 
     const $ = s => panel.querySelector(s);
@@ -73,7 +82,20 @@
     $('#zaec-add-kb').onclick = addCurrentTicketToKnowledgeBase;
     $('#zaec-add-exporter').onclick = addExporterSelectionToKnowledgeBase;
     $('#zaec-send').onclick = sendMessage;
+    $('#zaec-tab-chat').onclick = () => switchView('chat');
+    $('#zaec-tab-export').onclick = () => switchView('export');
     $('#zaec-input').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendMessage(); });
+
+    function switchView(view) {
+        state.view = view;
+        const isExport = view === 'export';
+        $('#zaec-view-chat').style.display = isExport ? 'none' : 'flex';
+        $('#zaec-view-export').style.display = isExport ? 'block' : 'none';
+        $('#zaec-tab-chat').classList.toggle('active', !isExport);
+        $('#zaec-tab-export').classList.toggle('active', isExport);
+        panel.classList.toggle('zaec-export-mode', isExport);
+        if (isExport) embedExporter();
+    }
 
     function currentTicketId() {
         const m = location.pathname.match(/\/agent\/tickets\/(\d+)/);
@@ -86,14 +108,36 @@
             .filter(Number.isFinite);
     }
 
+    function embedExporter() {
+        const exporter = document.getElementById(EXPORTER_ID);
+        const host = $('#zaec-export-host');
+        const standaloneToggle = document.getElementById(`${EXPORTER_ID}-toggle`);
+        const localAssistantToggle = document.getElementById(`${EXPORTER_ID}-assist-toggle`);
+        if (standaloneToggle) standaloneToggle.style.setProperty('display', 'none', 'important');
+        if (localAssistantToggle) localAssistantToggle.style.setProperty('display', 'none', 'important');
+        if (!exporter) {
+            state.exporterEmbedded = false;
+            if (!host.querySelector('.zaec-export-missing')) host.innerHTML = '<div class="zaec-export-missing">Zendesk AI Exporter is not loaded. Make sure the exporter userscript is enabled.</div>';
+            return false;
+        }
+        if (exporter.parentElement !== host) {
+            host.textContent = '';
+            host.appendChild(exporter);
+        }
+        state.exporterEmbedded = true;
+        return true;
+    }
+
     function refreshContext() {
         const id = currentTicketId();
         const exporterPresent = !!document.getElementById(EXPORTER_ID);
+        if (exporterPresent) embedExporter();
         const selectedCount = exporterSelectedIds().length;
         toggle.style.display = id || exporterPresent ? 'block' : 'none';
         if (id !== state.ticketId) { state.ticketId = id; state.messages = []; renderChat(); }
         $('#zaec-ticket-label').textContent = id ? `Ticket #${id}` : exporterPresent ? 'Exporter integration' : 'Ready';
         $('#zaec-add-exporter').textContent = selectedCount ? `Upload exporter selection (${selectedCount})` : 'Upload exporter selection to KB';
+        $('#zaec-tab-export').disabled = !exporterPresent;
         if (!state.busy) {
             $('#zaec-add-kb').disabled = !id;
             $('#zaec-add-exporter').disabled = !selectedCount;
@@ -210,7 +254,7 @@
     async function addExporterSelectionToKnowledgeBase() {
         if (state.busy) return;
         const ids = exporterSelectedIds();
-        if (!ids.length) { setStatus('Select tickets in Zendesk AI Exporter first.', false); return; }
+        if (!ids.length) { setStatus('Select tickets in the Export tab first.', false); return; }
         setBusy(true);
         try {
             requireToken();
@@ -256,6 +300,7 @@
             const allFailures = [...loadFailures, ...importFailures];
             if (allFailures.length) console.warn('Zendesk AI bulk import failures:', allFailures);
             setStatus(`KB upload complete: ${imported}/${ids.length} tickets · ${chunks} chunks · ${embeddings} embeddings · PII ${pii}${failed ? ` · ${failed} failed` : ''}`, failed === 0);
+            switchView('chat');
         } catch (e) { setStatus(e.message || String(e), false); }
         finally { setBusy(false); refreshContext(); }
     }
@@ -289,7 +334,7 @@
 
     function renderChat() {
         const el = $('#zaec-chat');
-        if (!state.messages.length) { el.innerHTML = '<div class="zaec-empty">Ask about the current ticket or upload selected tickets from Zendesk AI Exporter.</div>'; return; }
+        if (!state.messages.length) { el.innerHTML = '<div class="zaec-empty">Ask about the current ticket or use the Export tab to add historical tickets.</div>'; return; }
         el.innerHTML = '';
         for (const msg of state.messages) {
             const box = document.createElement('div'); box.className = `zaec-msg ${msg.role === 'user' ? 'zaec-user' : 'zaec-assistant'}`;
