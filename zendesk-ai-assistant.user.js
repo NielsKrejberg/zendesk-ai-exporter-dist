@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.4.1
+// @version      0.5.0
 // @description  Zendesk AI support assistant with built-in ticket search, export and Supabase knowledge-base upload.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -25,9 +25,6 @@
     const TOKEN_KEY = 'zae_supabase_import_token';
     const COMMENT_CONCURRENCY = 4;
     const IMPORT_BATCH_SIZE = 20;
-    const DB_NAME = 'zendesk-ai-exporter-kb';
-    const DB_VERSION = 1;
-    const STORE = 'tickets';
 
     if (document.getElementById(APP_ID)) return;
 
@@ -41,7 +38,6 @@
         exportRunning: false,
         exportCancelled: false,
         groupCache: new Map(),
-        kbCount: 0,
     };
 
     const style = document.createElement('style');
@@ -53,7 +49,7 @@
       #${APP_ID} *{box-sizing:border-box}
       .zaec-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 13px;border-bottom:1px solid rgba(148,210,168,.18);flex:0 0 auto}
       .zaec-title{font-size:15px;font-weight:700}.zaec-sub,.zaec-help{font-size:11px;color:rgba(255,255,255,.58)}
-      .zaec-head-actions,.zaec-tools,.zaec-input-row,.zaec-tabs,.zaec-actions,.zaec-kb-row{display:flex;gap:7px;align-items:center}
+      .zaec-head-actions,.zaec-tools,.zaec-input-row,.zaec-tabs,.zaec-actions{display:flex;gap:7px;align-items:center}
       #${APP_ID} button{border:1px solid rgba(255,255,255,.14);border-radius:6px;background:rgba(255,255,255,.08);color:#fff;padding:7px 9px;cursor:pointer}#${APP_ID} button:hover{background:rgba(255,255,255,.13)}#${APP_ID} button:disabled{opacity:.45;cursor:default}
       .zaec-primary{background:rgba(117,190,139,.20)!important;border-color:rgba(155,229,178,.35)!important}
       .zaec-tabs{padding:7px 11px;border-bottom:1px solid rgba(148,210,168,.14)}.zaec-tab{min-width:74px}.zaec-tab.active{background:rgba(117,190,139,.22)!important;border-color:rgba(155,229,178,.38)!important}
@@ -61,12 +57,10 @@
       .zaec-tools{padding:8px 11px;border-bottom:1px solid rgba(148,210,168,.14);flex-wrap:wrap}.zaec-status{margin-left:auto;color:rgba(255,255,255,.56);font-size:11px;max-width:420px;text-align:right;overflow-wrap:anywhere}.zaec-error{color:#ffd3c8}.zaec-ok{color:#d9f5e2}
       .zaec-chat{flex:1;min-height:0;overflow:auto;padding:12px}.zaec-msg{margin:0 0 11px;padding:9px 10px;border-radius:9px;white-space:pre-wrap;overflow-wrap:anywhere}.zaec-user{margin-left:45px;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.10)}.zaec-assistant{margin-right:28px;background:rgba(37,84,57,.54);border:1px solid rgba(148,210,168,.16)}
       .zaec-role{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.48);margin-bottom:4px}.zaec-sources{margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,.10);display:flex;gap:5px;flex-wrap:wrap}.zaec-source{display:inline-flex;padding:3px 6px;border-radius:999px;border:1px solid rgba(155,229,178,.22);background:rgba(117,190,139,.12);color:#dff6e6;text-decoration:none;font-size:11px}
-      .zaec-empty{padding:20px 12px;color:rgba(255,255,255,.58);text-align:center}.zaec-compose{padding:10px;border-top:1px solid rgba(148,210,168,.18)}#${APP_ID} textarea{resize:vertical}
-      .zaec-input-row{margin-top:7px;justify-content:flex-end}
-      .zaec-export-body{padding:10px 12px 12px;overflow:auto;display:flex;flex-direction:column;min-height:0;height:100%}.zaec-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 10px}.zaec-section{margin-top:9px;flex:0 0 auto}.zaec-actions{flex-wrap:wrap;margin-top:9px}.zaec-kb{padding:8px;border:1px solid rgba(148,210,168,.16);border-radius:7px;background:rgba(0,0,0,.10);flex:0 0 auto}.zaec-kb-row{flex-wrap:wrap}.zaec-kb-count{font-weight:600}
+      .zaec-empty{padding:20px 12px;color:rgba(255,255,255,.58);text-align:center}.zaec-compose{padding:10px;border-top:1px solid rgba(148,210,168,.18)}#${APP_ID} textarea{resize:vertical}.zaec-input-row{margin-top:7px;justify-content:flex-end}
+      .zaec-export-body{padding:10px 12px 12px;overflow:auto;display:flex;flex-direction:column;min-height:0;height:100%}.zaec-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 10px}.zaec-section{margin-top:9px;flex:0 0 auto}.zaec-actions{flex-wrap:wrap;margin-top:9px}
       #${APP_ID} label{display:grid;gap:4px;color:rgba(255,255,255,.84);min-width:0}#${APP_ID} input,#${APP_ID} select,#${APP_ID} textarea{width:100%;min-width:0;border:1px solid rgba(255,255,255,.12);border-radius:6px;background:rgba(0,0,0,.18);color:#fff;padding:7px 8px;outline:none}#${APP_ID} input,#${APP_ID} select{min-height:34px}.zaec-compose textarea{min-height:76px;max-height:180px}.zaec-export-body textarea{min-height:48px;max-height:110px}
       .zaec-table-wrap{margin-top:9px;flex:1 0 220px;min-height:220px;overflow:auto;border:1px solid rgba(148,210,168,.16);border-radius:7px}.zaec-table-wrap table{width:100%;border-collapse:collapse;min-width:980px}.zaec-table-wrap th{position:sticky;top:0;z-index:1;background:rgba(20,63,42,.98);text-align:left}.zaec-table-wrap th,.zaec-table-wrap td{padding:7px 8px;border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top}.zaec-link{color:#d9f5e2;text-decoration:none;font-weight:600}.zaec-pill{display:inline-block;padding:2px 6px;border-radius:999px;background:rgba(125,200,148,.15);border:1px solid rgba(145,219,168,.18)}
-      .zaec-local-evidence{margin-top:8px;padding:9px;border:1px solid rgba(148,210,168,.16);border-radius:7px;background:rgba(0,0,0,.10);display:none}.zaec-local-card{padding:8px;margin-top:7px;border:1px solid rgba(148,210,168,.15);border-radius:7px;background:rgba(0,0,0,.10)}
       @media(max-width:700px){#${APP_ID},#${APP_ID}.zaec-export-mode{top:6px;right:6px;width:calc(100vw - 12px);height:calc(100vh - 12px)}.zaec-grid{grid-template-columns:1fr}.zaec-table-wrap{min-height:260px}}
     `;
     document.head.appendChild(style);
@@ -82,18 +76,12 @@
       <div class="zaec-head"><div><div class="zaec-title">Zendesk AI Assistant</div><div class="zaec-sub" id="zaec-ticket-label">Ready</div></div><div class="zaec-head-actions"><button id="zaec-settings" title="Configure access token">⚙</button><button id="zaec-close">×</button></div></div>
       <div class="zaec-tabs"><button id="zaec-tab-chat" class="zaec-tab active">Chat</button><button id="zaec-tab-export" class="zaec-tab">Export</button></div>
       <div id="zaec-view-chat" class="zaec-view zaec-chat-view">
-        <div class="zaec-tools"><button id="zaec-add-kb" class="zaec-primary">Add current ticket to KB</button><button id="zaec-local-evidence-btn">Local evidence</button><button id="zaec-clear">Clear chat</button><span class="zaec-status" id="zaec-status">Ready</span></div>
-        <div id="zaec-local-evidence" class="zaec-local-evidence"></div>
+        <div class="zaec-tools"><button id="zaec-add-kb" class="zaec-primary">Add current ticket to KB</button><button id="zaec-clear">Clear chat</button><span class="zaec-status" id="zaec-status">Ready</span></div>
         <div class="zaec-chat" id="zaec-chat"><div class="zaec-empty">Ask about the current ticket or use Export to add historical tickets.</div></div>
         <div class="zaec-compose"><textarea id="zaec-input" placeholder="Ask about this ticket…">Help me solve this</textarea><div class="zaec-input-row"><button id="zaec-send" class="zaec-primary">Send</button></div></div>
       </div>
       <div id="zaec-view-export" class="zaec-view zaec-export-view">
         <div class="zaec-export-body">
-          <div class="zaec-kb">
-            <div class="zaec-kb-row"><strong>Local knowledge base</strong><span class="zaec-kb-count" id="zaec-kb-count">Loading…</span></div>
-            <div class="zaec-kb-row" style="margin-top:7px"><input type="file" id="zaec-kb-files" accept=".jsonl,.ndjson,.json" multiple><button id="zaec-kb-import">Import file(s)</button><button id="zaec-kb-clear">Clear local KB</button></div>
-            <div class="zaec-help">Legacy browser-local knowledge base retained from the standalone exporter. Cloud chat uses Supabase instead.</div>
-          </div>
           <div class="zaec-section"><label>Search terms / Zendesk query<textarea id="zaec-query" placeholder='Optional. Use | between alternatives, e.g. checkout error | payment failed | basket issue'></textarea></label><div class="zaec-help">Use | for multiple alternatives. Results are combined and duplicate tickets removed.</div></div>
           <div class="zaec-section zaec-grid"><label>From date<input type="date" id="zaec-from-date"></label><label>To date<input type="date" id="zaec-to-date"></label><label>Date field<select id="zaec-date-field"><option value="solved">Solved date</option><option value="created" selected>Created date</option><option value="updated">Updated date</option></select></label><label>Group<input id="zaec-group" value="Web - Helpdesk" placeholder="Leave empty for any group"></label></div>
           <div class="zaec-section zaec-grid"><label>Comments in JSONL<select id="zaec-comments"><option value="all">Public + internal notes</option><option value="public">Public only</option></select></label><label>Attachment handling<select id="zaec-attachments"><option value="urls">Include attachment URLs</option><option value="none">Exclude attachments</option></select></label></div>
@@ -110,7 +98,6 @@
     $('#zaec-settings').onclick = configureToken;
     $('#zaec-clear').onclick = clearChat;
     $('#zaec-add-kb').onclick = addCurrentTicketToKnowledgeBase;
-    $('#zaec-local-evidence-btn').onclick = analyzeLocalEvidence;
     $('#zaec-send').onclick = sendMessage;
     $('#zaec-tab-chat').onclick = () => switchView('chat');
     $('#zaec-tab-export').onclick = () => switchView('export');
@@ -129,12 +116,9 @@
     $('#zaec-upload-cloud').onclick = uploadSelectedToKnowledgeBase;
     $('#zaec-export-jsonl').onclick = exportSelectedJsonl;
     $('#zaec-export-csv').onclick = () => exportCsv(getSelectedTickets());
-    $('#zaec-kb-import').onclick = importKnowledgeFiles;
-    $('#zaec-kb-clear').onclick = clearKnowledgeBase;
 
     setDefaultFilters();
     refreshContext();
-    refreshKnowledgeCount();
     setInterval(refreshContext, 800);
 
     function switchView(view) {
@@ -155,10 +139,9 @@
     function refreshContext() {
         const id = currentTicketId();
         toggle.style.display = 'block';
-        if (id !== state.ticketId) { state.ticketId = id; state.messages = []; renderChat(); $('#zaec-local-evidence').style.display = 'none'; }
+        if (id !== state.ticketId) { state.ticketId = id; state.messages = []; renderChat(); }
         $('#zaec-ticket-label').textContent = id ? `Ticket #${id}` : 'Zendesk';
         if (!state.busy) $('#zaec-add-kb').disabled = !id;
-        $('#zaec-local-evidence-btn').disabled = !id;
     }
 
     function getToken() { return String(GM_getValue(TOKEN_KEY, '') || '').trim(); }
@@ -445,25 +428,6 @@
     function exportCsv(tickets){const h=['id','created_at','updated_at','solved_at','status','subject','group_id','group_name','assignee_id','priority','type','tags','conversation_loaded','conversation_count','url'],rows=[h.map(csvCell).join(',')];for(const t of tickets){const v={...t,tags:(t.tags||[]).join(' | '),conversation_count:Array.isArray(t.conversation)?t.conversation.length:''};rows.push(h.map(k=>csvCell(v[k])).join(','))}downloadBlob(rows.join('\n'),`zendesk-tickets-${dateStamp()}.csv`,'text/csv;charset=utf-8')}
     function csvCell(v){const s=v==null?'':String(v);return `"${s.replaceAll('"','""')}"`}
     function downloadBlob(c,n,t){const b=new Blob([c],{type:t}),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=n;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1000)}
-
-    async function openDb(){return new Promise((resolve,reject)=>{const r=indexedDB.open(DB_NAME,DB_VERSION);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(STORE))r.result.createObjectStore(STORE,{keyPath:'id'})};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)})}
-    async function dbPutMany(items){const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readwrite'),store=tx.objectStore(STORE);items.forEach(x=>store.put(x));tx.oncomplete=()=>{db.close();resolve()};tx.onerror=()=>reject(tx.error)})}
-    async function dbGetAll(){const db=await openDb();return new Promise((resolve,reject)=>{const r=db.transaction(STORE,'readonly').objectStore(STORE).getAll();r.onsuccess=()=>{db.close();resolve(r.result||[])};r.onerror=()=>reject(r.error)})}
-    async function dbClear(){const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).clear();tx.oncomplete=()=>{db.close();resolve()};tx.onerror=()=>reject(tx.error)})}
-    async function refreshKnowledgeCount(){try{const all=await dbGetAll();state.kbCount=all.length;$('#zaec-kb-count').textContent=`${all.length.toLocaleString()} tickets`}catch{$('#zaec-kb-count').textContent='Unavailable'}}
-    async function importKnowledgeFiles(){const files=[...$('#zaec-kb-files').files];if(!files.length){setExportStatus('Choose one or more JSONL files first.');return}try{let imported=[];for(const file of files){const text=await file.text();const rows=file.name.toLowerCase().endsWith('.json')&&!file.name.toLowerCase().endsWith('.jsonl')?JSON.parse(text):text.split(/\r?\n/).filter(Boolean).map((line,i)=>{try{return JSON.parse(line)}catch{throw new Error(`${file.name}: invalid JSON on line ${i+1}`)}});const arr=Array.isArray(rows)?rows:[rows];imported.push(...arr.filter(x=>x&&x.id).map(buildKnowledgeRecord))}await dbPutMany(imported);await refreshKnowledgeCount();setExportStatus(`Imported/updated ${imported.length.toLocaleString()} local knowledge-base tickets.`,true)}catch(e){setExportStatus(`Local knowledge-base import failed: ${e.message}`,false)}}
-    async function clearKnowledgeBase(){if(!confirm('Clear all locally stored historical Zendesk tickets?'))return;await dbClear();await refreshKnowledgeCount();setExportStatus('Local knowledge base cleared.',true)}
-    function buildKnowledgeRecord(ticket){const conv=Array.isArray(ticket.conversation)?ticket.conversation:[];const resolutionSnippets=extractResolutionSnippets(ticket);const confirmed=hasResolutionConfirmation(conv);const evidenceQuality=resolutionSnippets.length?(confirmed?'strong':'moderate'):'weak';return {id:Number(ticket.id),subject:ticket.subject||'',description:ticket.description||'',status:ticket.status||'',group_name:ticket.group_name||'',tags:ticket.tags||[],url:ticket.url||`${location.origin}/agent/tickets/${ticket.id}`,conversation:conv,derived:ticket.derived||{},search_text:buildSearchText(ticket),resolution_snippets:resolutionSnippets,evidence_quality:evidenceQuality,imported_at:new Date().toISOString()}}
-    function buildSearchText(ticket){const conv=(ticket.conversation||[]).map(c=>c.body||'').join(' ');return [ticket.subject,ticket.description,(ticket.tags||[]).join(' '),conv].filter(Boolean).join(' ').slice(0,30000)}
-    function extractResolutionSnippets(ticket){const re=/(fixed|resolved|working now|works now|cause|caused by|because|due to|missing|added|updated|corrected|changed|removed|workaround|solution|skyldes|rettet|løst|virker nu|udgået|discontinued|price increase|nightly|daily run|sync)/i;return (ticket.conversation||[]).filter(c=>re.test(c.body||'')&&(c.author?.role==='agent'||c.author?.role==='admin'||c.public===false)).map(c=>({comment_id:c.id,created_at:c.created_at,public:c.public,author:c.author?.name||'',text:cleanSnippet(c.body||'',520)})).slice(-6)}
-    function hasResolutionConfirmation(conv){const re=/(works now|working now|fixed now|resolved|solved|issue is gone|not happening anymore|got solved|virker nu|løst|thank.*work)/i;return conv.some(c=>re.test(c.body||''))}
-    function cleanSnippet(text,max){return String(text).replace(/&nbsp;/g,' ').replace(/\s+/g,' ').trim().slice(0,max)}
-
-    async function analyzeLocalEvidence(){const id=currentTicketId(),box=$('#zaec-local-evidence');box.style.display='block';box.textContent='Loading local evidence…';if(!id){box.textContent='Open a Zendesk ticket first.';return}try{const kb=await dbGetAll();if(!kb.length){box.textContent='No local knowledge base imported.';return}const ticket=await loadCurrentTicket();const matches=findSimilar(ticket,kb.filter(x=>Number(x.id)!==id)).filter(m=>m.similarity>=.10).slice(0,5);if(!matches.length){box.textContent='No related local historical tickets found.';return}box.innerHTML=matches.map(m=>`<div class="zaec-local-card"><a class="zaec-link" target="_blank" rel="noopener" href="${escapeHtml(m.url)}">#${m.id} — ${escapeHtml(m.subject)}</a><div class="zaec-help">Similarity ${(m.similarity*100).toFixed(0)}% · evidence ${escapeHtml(m.evidence_quality)}</div>${(m.resolution_snippets||[]).slice(-2).map(s=>`<div style="margin-top:5px">${escapeHtml(s.text)}</div>`).join('')}</div>`).join('')}catch(e){box.textContent=`Local analysis failed: ${e.message}`}}
-    function findSimilar(ticket,kb){const currentSubject=tokenFreq(ticket.subject||''),currentAll=tokenFreq(buildSearchText(ticket));return kb.map(item=>{const s=cosine(currentSubject,tokenFreq(item.subject||'')),a=cosine(currentAll,tokenFreq(item.search_text||''));const similarity=Math.min(1,s*.55+a*.45);const q=item.evidence_quality==='strong'?1:item.evidence_quality==='moderate'?.72:.32;return {...item,similarity,evidence_score:similarity*q}}).sort((x,y)=>y.evidence_score-x.evidence_score).slice(0,8)}
-    const STOP=new Set('the a an and or to of in on for with is are was were be been being this that it its i we you they our your my from at as by can could would should have has had do does did not no but if then than into about after before customer customers ticket tickets hi hello thanks thank best regards team bolia'.split(' '));
-    function tokenFreq(text){const m=new Map();String(text).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').match(/[a-z0-9_-]{3,}/g)?.forEach(t=>{if(!STOP.has(t))m.set(t,(m.get(t)||0)+1)});return m}
-    function cosine(a,b){let dot=0,aa=0,bb=0;a.forEach(v=>aa+=v*v);b.forEach(v=>bb+=v*v);a.forEach((v,k)=>dot+=v*(b.get(k)||0));return aa&&bb?dot/Math.sqrt(aa*bb):0}
 
     function formatDate(v){if(!v)return'';const d=new Date(v);return Number.isNaN(d.getTime())?v:d.toLocaleString()}
     function escapeHtml(v){return String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;')}
