@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.5.0
-// @description  Zendesk AI support assistant with built-in ticket search, export and Supabase knowledge-base upload.
+// @version      0.6.0
+// @description  Zendesk AI support assistant with built-in ticket search, export, Supabase KB upload, and versioned reference knowledge.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
 // @updateURL    https://raw.githubusercontent.com/NielsKrejberg/zendesk-ai-exporter-dist/main/zendesk-ai-assistant.user.js
@@ -22,6 +22,7 @@
     const SUPABASE_BASE = 'https://gdpukysdcaoxtgqjkesv.supabase.co/functions/v1';
     const CHAT_ENDPOINT = `${SUPABASE_BASE}/zendesk-chat`;
     const IMPORT_ENDPOINT = `${SUPABASE_BASE}/import-zendesk`;
+    const REFERENCE_IMPORT_ENDPOINT = `${SUPABASE_BASE}/import-reference-knowledge`;
     const TOKEN_KEY = 'zae_supabase_import_token';
     const COMMENT_CONCURRENCY = 4;
     const IMPORT_BATCH_SIZE = 20;
@@ -49,16 +50,17 @@
       #${APP_ID} *{box-sizing:border-box}
       .zaec-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 13px;border-bottom:1px solid rgba(148,210,168,.18);flex:0 0 auto}
       .zaec-title{font-size:15px;font-weight:700}.zaec-sub,.zaec-help{font-size:11px;color:rgba(255,255,255,.58)}
-      .zaec-head-actions,.zaec-tools,.zaec-input-row,.zaec-tabs,.zaec-actions{display:flex;gap:7px;align-items:center}
+      .zaec-head-actions,.zaec-tools,.zaec-input-row,.zaec-tabs,.zaec-actions,.zaec-reference-row{display:flex;gap:7px;align-items:center}
       #${APP_ID} button{border:1px solid rgba(255,255,255,.14);border-radius:6px;background:rgba(255,255,255,.08);color:#fff;padding:7px 9px;cursor:pointer}#${APP_ID} button:hover{background:rgba(255,255,255,.13)}#${APP_ID} button:disabled{opacity:.45;cursor:default}
       .zaec-primary{background:rgba(117,190,139,.20)!important;border-color:rgba(155,229,178,.35)!important}
       .zaec-tabs{padding:7px 11px;border-bottom:1px solid rgba(148,210,168,.14)}.zaec-tab{min-width:74px}.zaec-tab.active{background:rgba(117,190,139,.22)!important;border-color:rgba(155,229,178,.38)!important}
       .zaec-view{flex:1;min-height:0}.zaec-chat-view{display:flex;flex-direction:column}.zaec-export-view{display:none;flex-direction:column;min-height:0}
       .zaec-tools{padding:8px 11px;border-bottom:1px solid rgba(148,210,168,.14);flex-wrap:wrap}.zaec-status{margin-left:auto;color:rgba(255,255,255,.56);font-size:11px;max-width:420px;text-align:right;overflow-wrap:anywhere}.zaec-error{color:#ffd3c8}.zaec-ok{color:#d9f5e2}
       .zaec-chat{flex:1;min-height:0;overflow:auto;padding:12px}.zaec-msg{margin:0 0 11px;padding:9px 10px;border-radius:9px;white-space:pre-wrap;overflow-wrap:anywhere}.zaec-user{margin-left:45px;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.10)}.zaec-assistant{margin-right:28px;background:rgba(37,84,57,.54);border:1px solid rgba(148,210,168,.16)}
-      .zaec-role{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.48);margin-bottom:4px}.zaec-sources{margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,.10);display:flex;gap:5px;flex-wrap:wrap}.zaec-source{display:inline-flex;padding:3px 6px;border-radius:999px;border:1px solid rgba(155,229,178,.22);background:rgba(117,190,139,.12);color:#dff6e6;text-decoration:none;font-size:11px}
+      .zaec-role{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.48);margin-bottom:4px}.zaec-sources{margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,.10);display:flex;gap:5px;flex-wrap:wrap}.zaec-source{display:inline-flex;padding:3px 6px;border-radius:999px;border:1px solid rgba(155,229,178,.22);background:rgba(117,190,139,.12);color:#dff6e6;text-decoration:none;font-size:11px}.zaec-reference-source{border-style:dashed;background:rgba(172,214,185,.08)}
       .zaec-empty{padding:20px 12px;color:rgba(255,255,255,.58);text-align:center}.zaec-compose{padding:10px;border-top:1px solid rgba(148,210,168,.18)}#${APP_ID} textarea{resize:vertical}.zaec-input-row{margin-top:7px;justify-content:flex-end}
       .zaec-export-body{padding:10px 12px 12px;overflow:auto;display:flex;flex-direction:column;min-height:0;height:100%}.zaec-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 10px}.zaec-section{margin-top:9px;flex:0 0 auto}.zaec-actions{flex-wrap:wrap;margin-top:9px}
+      .zaec-reference-box{padding:9px 10px;border:1px solid rgba(148,210,168,.18);border-radius:8px;background:rgba(0,0,0,.11)}.zaec-reference-row{margin-top:7px;flex-wrap:wrap}.zaec-reference-row input[type=file]{flex:1;min-width:260px}
       #${APP_ID} label{display:grid;gap:4px;color:rgba(255,255,255,.84);min-width:0}#${APP_ID} input,#${APP_ID} select,#${APP_ID} textarea{width:100%;min-width:0;border:1px solid rgba(255,255,255,.12);border-radius:6px;background:rgba(0,0,0,.18);color:#fff;padding:7px 8px;outline:none}#${APP_ID} input,#${APP_ID} select{min-height:34px}.zaec-compose textarea{min-height:76px;max-height:180px}.zaec-export-body textarea{min-height:48px;max-height:110px}
       .zaec-table-wrap{margin-top:9px;flex:1 0 220px;min-height:220px;overflow:auto;border:1px solid rgba(148,210,168,.16);border-radius:7px}.zaec-table-wrap table{width:100%;border-collapse:collapse;min-width:980px}.zaec-table-wrap th{position:sticky;top:0;z-index:1;background:rgba(20,63,42,.98);text-align:left}.zaec-table-wrap th,.zaec-table-wrap td{padding:7px 8px;border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top}.zaec-link{color:#d9f5e2;text-decoration:none;font-weight:600}.zaec-pill{display:inline-block;padding:2px 6px;border-radius:999px;background:rgba(125,200,148,.15);border:1px solid rgba(145,219,168,.18)}
       @media(max-width:700px){#${APP_ID},#${APP_ID}.zaec-export-mode{top:6px;right:6px;width:calc(100vw - 12px);height:calc(100vh - 12px)}.zaec-grid{grid-template-columns:1fr}.zaec-table-wrap{min-height:260px}}
@@ -77,11 +79,16 @@
       <div class="zaec-tabs"><button id="zaec-tab-chat" class="zaec-tab active">Chat</button><button id="zaec-tab-export" class="zaec-tab">Export</button></div>
       <div id="zaec-view-chat" class="zaec-view zaec-chat-view">
         <div class="zaec-tools"><button id="zaec-add-kb" class="zaec-primary">Add current ticket to KB</button><button id="zaec-clear">Clear chat</button><span class="zaec-status" id="zaec-status">Ready</span></div>
-        <div class="zaec-chat" id="zaec-chat"><div class="zaec-empty">Ask about the current ticket or use Export to add historical tickets.</div></div>
+        <div class="zaec-chat" id="zaec-chat"><div class="zaec-empty">Ask about the current ticket or use Export to add historical tickets and reference knowledge.</div></div>
         <div class="zaec-compose"><textarea id="zaec-input" placeholder="Ask about this ticket…">Help me solve this</textarea><div class="zaec-input-row"><button id="zaec-send" class="zaec-primary">Send</button></div></div>
       </div>
       <div id="zaec-view-export" class="zaec-view zaec-export-view">
         <div class="zaec-export-body">
+          <div class="zaec-section zaec-reference-box">
+            <strong>Reference knowledge</strong>
+            <div class="zaec-help">Upload versioned non-Zendesk reference snapshots. A newer snapshot with the same source key supersedes the older one for retrieval.</div>
+            <div class="zaec-reference-row"><input type="file" id="zaec-reference-file" accept=".json,application/json"><button id="zaec-upload-reference" class="zaec-primary">Upload reference snapshot</button></div>
+          </div>
           <div class="zaec-section"><label>Search terms / Zendesk query<textarea id="zaec-query" placeholder='Optional. Use | between alternatives, e.g. checkout error | payment failed | basket issue'></textarea></label><div class="zaec-help">Use | for multiple alternatives. Results are combined and duplicate tickets removed.</div></div>
           <div class="zaec-section zaec-grid"><label>From date<input type="date" id="zaec-from-date"></label><label>To date<input type="date" id="zaec-to-date"></label><label>Date field<select id="zaec-date-field"><option value="solved">Solved date</option><option value="created" selected>Created date</option><option value="updated">Updated date</option></select></label><label>Group<input id="zaec-group" value="Web - Helpdesk" placeholder="Leave empty for any group"></label></div>
           <div class="zaec-section zaec-grid"><label>Comments in JSONL<select id="zaec-comments"><option value="all">Public + internal notes</option><option value="public">Public only</option></select></label><label>Attachment handling<select id="zaec-attachments"><option value="urls">Include attachment URLs</option><option value="none">Exclude attachments</option></select></label></div>
@@ -107,6 +114,7 @@
             sendMessage();
         }
     });
+    $('#zaec-upload-reference').onclick = uploadReferencePackage;
     $('#zaec-find').onclick = findTickets;
     $('#zaec-load-comments').onclick = loadSelectedConversations;
     $('#zaec-cancel').onclick = () => { state.exportCancelled = true; setExportStatus('Cancellation requested…'); };
@@ -223,13 +231,13 @@
         return detail ? `Supabase ${status}${stage}: ${detail}` : `Supabase returned HTTP ${status || 'unknown'}`;
     }
 
-    function callSupabase(endpoint, body) {
+    function callSupabase(endpoint, body, timeout = 120000) {
         const token = requireToken();
         return new Promise((resolve, reject) => {
             GM_xmlhttpRequest({
                 method: 'POST', url: endpoint,
                 headers: { 'Content-Type': 'application/json', 'x-import-token': token },
-                data: JSON.stringify(body), timeout: 120000,
+                data: JSON.stringify(body), timeout,
                 onload: response => {
                     let data = null;
                     try { data = JSON.parse(response.responseText || '{}'); } catch {}
@@ -240,6 +248,32 @@
                 onerror: error => reject(new Error(`Supabase network request failed${error?.error ? `: ${error.error}` : ''}.`)),
             });
         });
+    }
+
+    async function uploadReferencePackage() {
+        if (state.busy || state.exportRunning) return;
+        const file = $('#zaec-reference-file').files?.[0];
+        if (!file) { setExportStatus('Choose a reference snapshot JSON file first.', false); return; }
+        state.busy = true;
+        $('#zaec-upload-reference').disabled = true;
+        try {
+            setExportStatus(`Reading ${file.name}…`);
+            let payload;
+            try { payload = JSON.parse(await file.text()); }
+            catch { throw new Error('Reference snapshot must be valid JSON.'); }
+            if (!Array.isArray(payload?.sources) || !payload.sources.length) throw new Error('Reference package contains no sources.');
+            const sourceCount = payload.sources.length;
+            const recordCount = payload.sources.reduce((sum, source) => sum + (Array.isArray(source.records) ? source.records.length : 0), 0);
+            setExportStatus(`Uploading ${sourceCount} sources / ${recordCount.toLocaleString()} records…`);
+            const result = await callSupabase(REFERENCE_IMPORT_ENDPOINT, payload, 240000);
+            const imported = (result.results || []).reduce((sum, row) => sum + Number(row.records || 0), 0);
+            setExportStatus(`Reference upload complete: ${result.imported_sources || sourceCount} sources · ${imported.toLocaleString()} records · PII ${sumRedactions(result.redactions)}`, true);
+        } catch (e) {
+            setExportStatus(e.message || String(e), false);
+        } finally {
+            state.busy = false;
+            $('#zaec-upload-reference').disabled = false;
+        }
     }
 
     async function addCurrentTicketToKnowledgeBase() {
@@ -271,11 +305,12 @@
             setStatus('Searching knowledge base…');
             const history = state.messages.slice(0, -1).slice(-4).map(({ role, content }) => ({ role, content }));
             const result = await callSupabase(CHAT_ENDPOINT, { ticket, message: text, history });
-            state.messages.push({ role: 'assistant', content: result.answer || '', sources: result.sources || [] });
+            state.messages.push({ role: 'assistant', content: result.answer || '', sources: result.sources || [], references: result.references || [] });
             renderChat();
-            setStatus(`${result.sources?.length || 0} historical source tickets`, true);
+            const refCount = result.references?.length || 0;
+            setStatus(`${result.sources?.length || 0} historical tickets · ${refCount} reference records`, true);
         } catch (e) {
-            state.messages.push({ role: 'assistant', content: `Error: ${e.message || String(e)}`, error: true, sources: [] });
+            state.messages.push({ role: 'assistant', content: `Error: ${e.message || String(e)}`, error: true, sources: [], references: [] });
             renderChat();
             setStatus(e.message || String(e), false);
         } finally { setBusy(false); }
@@ -283,16 +318,19 @@
 
     function renderChat() {
         const el = $('#zaec-chat');
-        if (!state.messages.length) { el.innerHTML = '<div class="zaec-empty">Ask about the current ticket or use Export to add historical tickets.</div>'; return; }
+        if (!state.messages.length) { el.innerHTML = '<div class="zaec-empty">Ask about the current ticket or use Export to add historical tickets and reference knowledge.</div>'; return; }
         el.innerHTML = '';
         for (const msg of state.messages) {
             const box = document.createElement('div'); box.className = `zaec-msg ${msg.role === 'user' ? 'zaec-user' : 'zaec-assistant'}`;
             const role = document.createElement('div'); role.className = 'zaec-role'; role.textContent = msg.role === 'user' ? 'You' : 'Assistant';
             const body = document.createElement('div'); renderAnswer(body, msg.content || ''); box.append(role, body);
-            if (Array.isArray(msg.sources) && msg.sources.length) {
+            if ((Array.isArray(msg.sources) && msg.sources.length) || (Array.isArray(msg.references) && msg.references.length)) {
                 const sources = document.createElement('div'); sources.className = 'zaec-sources';
-                for (const s of msg.sources) {
+                for (const s of msg.sources || []) {
                     const a = document.createElement('a'); a.className = 'zaec-source'; a.href = s.url || `${location.origin}/agent/tickets/${s.ticketId}`; a.target = '_blank'; a.rel = 'noopener'; a.textContent = `#${s.ticketId}`; a.title = `${s.subject || ''} · score ${Math.round(Number(s.score || 0) * 100)}%`; sources.appendChild(a);
+                }
+                for (const r of msg.references || []) {
+                    const span = document.createElement('span'); span.className = 'zaec-source zaec-reference-source'; span.textContent = `${r.sourceTitle || r.sourceKey} · ${r.snapshotDate}`; span.title = `${r.recordKey || ''}${r.score != null ? ` · score ${Math.round(Number(r.score || 0) * 100)}%` : ''}`; sources.appendChild(span);
                 }
                 box.appendChild(sources);
             }
@@ -313,7 +351,7 @@
 
     function clearChat() { state.messages = []; renderChat(); setStatus('Ready', true); }
     function sumRedactions(r) { return Object.values(r || {}).reduce((a, b) => a + Number(b || 0), 0); }
-    function setBusy(value) { state.busy = value; $('#zaec-send').disabled = value; $('#zaec-add-kb').disabled = value || !currentTicketId(); }
+    function setBusy(value) { state.busy = value; $('#zaec-send').disabled = value; $('#zaec-add-kb').disabled = value || !currentTicketId(); $('#zaec-upload-reference').disabled = value; }
     function setStatus(text, ok = null) { const el = $('#zaec-status'); el.textContent = text; el.className = `zaec-status ${ok === true ? 'zaec-ok' : ok === false ? 'zaec-error' : ''}`; }
     function setExportStatus(text, ok = null) { const el = $('#zaec-export-status'); el.textContent = text; el.className = `zaec-status ${ok === true ? 'zaec-ok' : ok === false ? 'zaec-error' : ''}`; }
 
@@ -422,7 +460,7 @@
     function selectNone(){state.selectedTicketIds.clear();panel.querySelectorAll('.zaec-row-check').forEach(c=>c.checked=false);updateSelectionUi()}
     function getSelectedTickets(){return state.tickets.filter(t=>state.selectedTicketIds.has(t.id))}
     function updateSelectionUi(){const has=state.tickets.length>0,sel=state.selectedTicketIds.size;$('#zaec-load-comments').disabled=!sel||state.exportRunning;$('#zaec-upload-cloud').disabled=!sel||state.exportRunning;$('#zaec-export-jsonl').disabled=!sel||state.exportRunning;$('#zaec-export-csv').disabled=!sel||state.exportRunning;$('#zaec-select-all').disabled=!has||state.exportRunning;$('#zaec-select-none').disabled=!has||state.exportRunning;$('#zaec-check-all').disabled=!has||state.exportRunning;$('#zaec-check-all').checked=has&&sel===state.tickets.length;$('#zaec-upload-cloud').textContent=sel?`Upload selected (${sel}) to KB`:'Upload selected to KB'}
-    function setExportRunningUi(r){$('#zaec-find').disabled=r;$('#zaec-cancel').disabled=!r;updateSelectionUi()}
+    function setExportRunningUi(r){$('#zaec-find').disabled=r;$('#zaec-cancel').disabled=!r;$('#zaec-upload-reference').disabled=r||state.busy;updateSelectionUi()}
 
     function exportJsonl(tickets){downloadBlob(tickets.map(t=>JSON.stringify(t)).join('\n'),`zendesk-tickets-${dateStamp()}.jsonl`,'application/x-ndjson;charset=utf-8')}
     function exportCsv(tickets){const h=['id','created_at','updated_at','solved_at','status','subject','group_id','group_name','assignee_id','priority','type','tags','conversation_loaded','conversation_count','url'],rows=[h.map(csvCell).join(',')];for(const t of tickets){const v={...t,tags:(t.tags||[]).join(' | '),conversation_count:Array.isArray(t.conversation)?t.conversation.length:''};rows.push(h.map(k=>csvCell(v[k])).join(','))}downloadBlob(rows.join('\n'),`zendesk-tickets-${dateStamp()}.csv`,'text/csv;charset=utf-8')}
