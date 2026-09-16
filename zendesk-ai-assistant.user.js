@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.3.0
+// @version      0.3.1
 // @description  Chat with a Supabase-backed Zendesk support knowledge base directly inside Zendesk.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -41,7 +41,7 @@
       .zaec-title{font-size:15px;font-weight:700}.zaec-sub{font-size:11px;color:rgba(255,255,255,.58)}.zaec-head-actions,.zaec-tools,.zaec-input-row,.zaec-tabs{display:flex;gap:7px;align-items:center}
       #${APP_ID} button{border:1px solid rgba(255,255,255,.14);border-radius:6px;background:rgba(255,255,255,.08);color:#fff;padding:7px 9px;cursor:pointer}#${APP_ID} button:hover{background:rgba(255,255,255,.13)}#${APP_ID} button:disabled{opacity:.45;cursor:default}
       .zaec-tabs{padding:7px 11px;border-bottom:1px solid rgba(148,210,168,.14)}.zaec-tab{min-width:74px}.zaec-tab.active{background:rgba(117,190,139,.22)!important;border-color:rgba(155,229,178,.38)!important}
-      .zaec-view{flex:1;min-height:0}.zaec-chat-view{display:flex;flex-direction:column}.zaec-export-view{display:none;overflow:hidden}.zaec-export-host{height:100%;min-height:0}.zaec-export-missing{padding:20px;color:rgba(255,255,255,.62);text-align:center}
+      .zaec-view{flex:1;min-height:0}.zaec-chat-view{display:flex;flex-direction:column}.zaec-export-view{display:none;overflow:hidden;flex-direction:column}.zaec-export-host{flex:1;min-height:0;overflow:hidden}.zaec-export-missing{padding:20px;color:rgba(255,255,255,.62);text-align:center}
       .zaec-tools{padding:8px 11px;border-bottom:1px solid rgba(148,210,168,.14);flex-wrap:wrap}.zaec-primary{background:rgba(117,190,139,.20)!important;border-color:rgba(155,229,178,.35)!important}.zaec-status{margin-left:auto;color:rgba(255,255,255,.56);font-size:11px;max-width:300px;text-align:right;overflow-wrap:anywhere}
       .zaec-chat{flex:1;min-height:0;overflow:auto;padding:12px}.zaec-msg{margin:0 0 11px;padding:9px 10px;border-radius:9px;white-space:pre-wrap;overflow-wrap:anywhere}.zaec-user{margin-left:45px;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.10)}.zaec-assistant{margin-right:28px;background:rgba(37,84,57,.54);border:1px solid rgba(148,210,168,.16)}
       .zaec-role{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.48);margin-bottom:4px}.zaec-sources{margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,.10);display:flex;gap:5px;flex-wrap:wrap}.zaec-source{display:inline-flex;padding:3px 6px;border-radius:999px;border:1px solid rgba(155,229,178,.22);background:rgba(117,190,139,.12);color:#dff6e6;text-decoration:none;font-size:11px}
@@ -64,14 +64,19 @@
       <div id="zaec-view-chat" class="zaec-view zaec-chat-view">
         <div class="zaec-tools">
           <button id="zaec-add-kb" class="zaec-primary">Add current ticket to KB</button>
-          <button id="zaec-add-exporter" class="zaec-primary">Upload exporter selection to KB</button>
           <button id="zaec-clear">Clear chat</button>
           <span class="zaec-status" id="zaec-status">Ready</span>
         </div>
-        <div class="zaec-chat" id="zaec-chat"><div class="zaec-empty">Ask about the current ticket or upload selected tickets from Zendesk AI Exporter.</div></div>
+        <div class="zaec-chat" id="zaec-chat"><div class="zaec-empty">Ask about the current ticket or use the Export tab to add historical tickets.</div></div>
         <div class="zaec-compose"><textarea id="zaec-input" placeholder="Ask about this ticket…"></textarea><div class="zaec-input-row"><button id="zaec-send" class="zaec-primary">Send</button></div></div>
       </div>
-      <div id="zaec-view-export" class="zaec-view zaec-export-view"><div id="zaec-export-host" class="zaec-export-host"><div class="zaec-export-missing">Loading Zendesk AI Exporter…</div></div></div>`;
+      <div id="zaec-view-export" class="zaec-view zaec-export-view">
+        <div class="zaec-tools">
+          <button id="zaec-add-exporter" class="zaec-primary">Upload selected tickets to KB</button>
+          <span class="zaec-status" id="zaec-export-status">Ready</span>
+        </div>
+        <div id="zaec-export-host" class="zaec-export-host"><div class="zaec-export-missing">Loading Zendesk AI Exporter…</div></div>
+      </div>`;
     document.body.appendChild(panel);
 
     const $ = s => panel.querySelector(s);
@@ -90,7 +95,7 @@
         state.view = view;
         const isExport = view === 'export';
         $('#zaec-view-chat').style.display = isExport ? 'none' : 'flex';
-        $('#zaec-view-export').style.display = isExport ? 'block' : 'none';
+        $('#zaec-view-export').style.display = isExport ? 'flex' : 'none';
         $('#zaec-tab-chat').classList.toggle('active', !isExport);
         $('#zaec-tab-export').classList.toggle('active', isExport);
         panel.classList.toggle('zaec-export-mode', isExport);
@@ -136,7 +141,7 @@
         toggle.style.display = id || exporterPresent ? 'block' : 'none';
         if (id !== state.ticketId) { state.ticketId = id; state.messages = []; renderChat(); }
         $('#zaec-ticket-label').textContent = id ? `Ticket #${id}` : exporterPresent ? 'Exporter integration' : 'Ready';
-        $('#zaec-add-exporter').textContent = selectedCount ? `Upload exporter selection (${selectedCount})` : 'Upload exporter selection to KB';
+        $('#zaec-add-exporter').textContent = selectedCount ? `Upload selected tickets (${selectedCount}) to KB` : 'Upload selected tickets to KB';
         $('#zaec-tab-export').disabled = !exporterPresent;
         if (!state.busy) {
             $('#zaec-add-kb').disabled = !id;
@@ -300,7 +305,6 @@
             const allFailures = [...loadFailures, ...importFailures];
             if (allFailures.length) console.warn('Zendesk AI bulk import failures:', allFailures);
             setStatus(`KB upload complete: ${imported}/${ids.length} tickets · ${chunks} chunks · ${embeddings} embeddings · PII ${pii}${failed ? ` · ${failed} failed` : ''}`, failed === 0);
-            switchView('chat');
         } catch (e) { setStatus(e.message || String(e), false); }
         finally { setBusy(false); refreshContext(); }
     }
@@ -370,7 +374,9 @@
     }
 
     function setStatus(text, ok = null) {
-        const el = $('#zaec-status'); el.textContent = text;
-        el.className = `zaec-status ${ok === true ? 'zaec-ok' : ok === false ? 'zaec-error' : ''}`;
+        for (const el of [$('#zaec-status'), $('#zaec-export-status')]) {
+            el.textContent = text;
+            el.className = `zaec-status ${ok === true ? 'zaec-ok' : ok === false ? 'zaec-error' : ''}`;
+        }
     }
 })();
