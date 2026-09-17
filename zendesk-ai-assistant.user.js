@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.10.6
+// @version     0.10.7
 // @description  Zendesk AI support assistant with built-in ticket search, export, Supabase KB upload, and versioned reference knowledge.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -621,7 +621,7 @@
         box.className = 'zaec-approved-solution';
         const title = document.createElement('div');
         title.className = 'zaec-approved-title';
-        title.textContent = 'Relevant approved solution';
+        title.textContent = 'Confirmed approved solution';
         const name = document.createElement('div');
         name.className = 'zaec-approved-name';
         name.textContent = solution.issue_name || 'Approved issue';
