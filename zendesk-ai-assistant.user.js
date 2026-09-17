@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.7.0
+// @version      0.7.1
 // @description  Zendesk AI support assistant with built-in ticket search, export, Supabase KB upload, and versioned reference knowledge.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -12,7 +12,7 @@
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
 // @connect      gdpukysdcaoxtgqjkesv.supabase.co
-// @run-at       document-idle
+// @run-at       document-start
 // ==/UserScript==
 
 (function () {
@@ -25,11 +25,20 @@
     const REFERENCE_IMPORT_ENDPOINT = `${SUPABASE_BASE}/import-reference-knowledge`;
     const LOGIN_ENDPOINT = `${SUPABASE_BASE}/request-login`;
     const TOKEN_KEY = 'zae_supabase_access_token';
+
+    function captureLoginCallbackEarly() {
+        const params = new URLSearchParams(location.hash.slice(1));
+        const token = params.get('access_token');
+        if (!token) return;
+        GM_setValue(TOKEN_KEY, token);
+        history.replaceState(null, '', location.pathname + location.search);
+    }
+
+    captureLoginCallbackEarly();
     const COMMENT_CONCURRENCY = 4;
     const IMPORT_BATCH_SIZE = 20;
 
-    captureLoginCallback();
-
+    function init() {
     if (document.getElementById(APP_ID)) return;
 
     const state = {
@@ -575,4 +584,8 @@
     function formatDate(v){if(!v)return'';const d=new Date(v);return Number.isNaN(d.getTime())?v:d.toLocaleString()}
     function escapeHtml(v){return String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;')}
     function dateStamp(){return new Date().toISOString().slice(0,10)}
+    }
+
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
+    else init();
 })();
