@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.10.5
+// @version      0.10.6
 // @description  Zendesk AI support assistant with built-in ticket search, export, Supabase KB upload, and versioned reference knowledge.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -132,7 +132,7 @@
     $('#zaec-add-kb').onclick = addCurrentTicketToKnowledgeBase;
     $('#zaec-send').onclick = sendMessage;
     $('#zaec-search-history').onclick = () => sendMessage('Search ticket history for comparable cases and confirmed solutions. Show only the strongest matches and their practical resolution.');
-    $('#zaec-search-docs').onclick = () => sendMessage('Look through the technical documentation and reference knowledge for the relevant solution or configuration. Give the most practical next action.');
+    $('#zaec-search-docs').onclick = () => sendMessage('Look through the technical documentation and reference knowledge for the relevant solution or configuration. Give the most practical next action.', true);
     $('#zaec-tab-chat').onclick = () => switchView('chat');
     $('#zaec-tab-export').onclick = () => switchView('export');
     $('#zaec-input').addEventListener('keydown', e => {
@@ -458,23 +458,21 @@
         finally { setBusy(false); }
     }
 
-    async function sendMessage() {
+    async function sendMessage(messageOverride = '', includeReferenceKnowledge = false) {
         if (state.busy) return;
-        const input = $('#zaec-input'), text = input.value.trim();
+        const input = $('#zaec-input');
+        const text = String(messageOverride || input.value).trim();
         if (!text) return;
-        input.value = '';
+        if (!messageOverride) input.value = '';
         state.messages.push({ role: 'user', content: text });
         renderChat();
         setBusy(true);
         try {
             setStatus('Loading ticket…');
             const ticket = await loadCurrentTicket();
-            const progressSteps = [
-                'Searching knowledge base…',
-                'Comparing previous Zendesk tickets…',
-                'Checking PIM and website reference data…',
-                'Preparing answer…'
-            ];
+            const progressSteps = includeReferenceKnowledge
+                ? ['Searching approved solutions…', 'Comparing previous Zendesk tickets…', 'Checking technical documentation…', 'Preparing answer…']
+                : ['Searching approved solutions…', 'Comparing previous Zendesk tickets…', 'Preparing answer…'];
             let progressIndex = 0;
             setStatus(progressSteps[progressIndex]);
             const progressTimer = setInterval(() => {
@@ -484,13 +482,13 @@
             }, 1800);
             try {
                 const history = state.messages.slice(0, -1).slice(-4).map(({ role, content }) => ({ role, content }));
-                const result = await callSupabase(CHAT_ENDPOINT, { ticket, message: text, history });
+                const result = await callSupabase(CHAT_ENDPOINT, { ticket, message: text, history, include_reference_knowledge: includeReferenceKnowledge });
                 clearInterval(progressTimer);
                 const reuseSuggestion = result.reuseSuggestion || extractReuseSuggestion(result.answer || '');
                 state.messages.push({ role: 'assistant', content: result.answer || '', sources: result.sources || [], references: result.references || [], approvedSolution: result.approvedSolution || null, reuseSuggestion });
                 renderChat();
                 const refCount = result.references?.length || 0;
-                setStatus(`${result.sources?.length || 0} historical tickets · ${refCount} reference records`, true);
+                setStatus(includeReferenceKnowledge ? `${result.sources?.length || 0} historical tickets · ${refCount} technical references` : `${result.sources?.length || 0} historical tickets`, true);
             } finally {
                 clearInterval(progressTimer);
             }
