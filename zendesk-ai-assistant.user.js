@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.7.1
+// @version      0.8.0
 // @description  Zendesk AI support assistant with built-in ticket search, export, Supabase KB upload, and versioned reference knowledge.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -24,7 +24,9 @@
     const IMPORT_ENDPOINT = `${SUPABASE_BASE}/import-zendesk`;
     const REFERENCE_IMPORT_ENDPOINT = `${SUPABASE_BASE}/import-reference-knowledge`;
     const LOGIN_ENDPOINT = `${SUPABASE_BASE}/request-login`;
+    const VERIFY_LOGIN_ENDPOINT = `${SUPABASE_BASE}/verify-login`;
     const TOKEN_KEY = 'zae_supabase_access_token';
+    const PENDING_EMAIL_KEY = 'zae_supabase_pending_email';
 
     function captureLoginCallbackEarly() {
         const params = new URLSearchParams(location.hash.slice(1));
@@ -115,7 +117,7 @@
     const $ = s => panel.querySelector(s);
     toggle.onclick = () => panel.style.display = panel.style.display === 'flex' ? 'none' : 'flex';
     $('#zaec-close').onclick = () => panel.style.display = 'none';
-    $('#zaec-settings').onclick = requestLoginLink;
+    $('#zaec-settings').onclick = requestLoginCode;
     $('#zaec-clear').onclick = clearChat;
     $('#zaec-add-kb').onclick = addCurrentTicketToKnowledgeBase;
     $('#zaec-send').onclick = sendMessage;
@@ -183,32 +185,61 @@
         setTimeout(() => setStatus('Signed in securely', true), 0);
     }
 
-    function requestLoginLink() {
-        const email = prompt('Enter your Bolia e-mail address. A sign-in link is sent only after you request it.');
+    function verifyLoginCode(email, code) {
+        GM_xmlhttpRequest({
+            method: 'POST',
+            url: VERIFY_LOGIN_ENDPOINT,
+            headers: { 'Content-Type': 'application/json' },
+            data: JSON.stringify({ email, code }),
+            onload: response => {
+                let data = {};
+                try { data = JSON.parse(response.responseText || '{}'); } catch {}
+                if (response.status >= 200 && response.status < 300 && data.access_token) {
+                    GM_setValue(TOKEN_KEY, data.access_token);
+                    GM_setValue(PENDING_EMAIL_KEY, '');
+                    setStatus('Signed in securely', true);
+                } else {
+                    setStatus(data.error || 'Could not verify the sign-in code.', false);
+                }
+            },
+            onerror: () => setStatus('Could not verify the sign-in code.', false),
+        });
+    }
+
+    function requestLoginCode() {
+        const pendingEmail = String(GM_getValue(PENDING_EMAIL_KEY, '') || '').trim();
+        if (pendingEmail) {
+            const code = prompt(`Enter the six-digit code sent to ${pendingEmail}. Cancel to request a new code.`);
+            if (code !== null && code.trim()) { verifyLoginCode(pendingEmail, code.trim()); return; }
+        }
+
+        const email = prompt('Enter your Bolia e-mail address. A six-digit sign-in code is sent only after you request it.');
         if (email === null || !email.trim()) return;
+        const normalizedEmail = email.trim().toLowerCase();
         GM_xmlhttpRequest({
             method: 'POST',
             url: LOGIN_ENDPOINT,
             headers: { 'Content-Type': 'application/json' },
-            data: JSON.stringify({ email: email.trim(), redirectTo: location.origin + location.pathname + location.search }),
+            data: JSON.stringify({ email: normalizedEmail }),
             onload: response => {
                 let data = {};
                 try { data = JSON.parse(response.responseText || '{}'); } catch {}
                 if (response.status >= 200 && response.status < 300) {
-                    setStatus(data.message || 'If your account is approved, a sign-in link has been sent.', true);
+                    GM_setValue(PENDING_EMAIL_KEY, normalizedEmail);
+                    setStatus('Code sent. Click Settings again to enter the six-digit code.', true);
                 } else {
-                    setStatus(data.error || 'Could not request a sign-in link.', false);
+                    setStatus(data.error || 'Could not request a sign-in code.', false);
                 }
             },
-            onerror: () => setStatus('Could not request a sign-in link.', false),
+            onerror: () => setStatus('Could not request a sign-in code.', false),
         });
     }
 
     function requireToken() {
         const token = getToken();
         if (!token) {
-            requestLoginLink();
-            throw new Error('Sign-in link requested. Open it from your e-mail, then try again.');
+            requestLoginCode();
+            throw new Error('Request a sign-in code, then click Settings again to enter it.');
         }
         return token;
     }
