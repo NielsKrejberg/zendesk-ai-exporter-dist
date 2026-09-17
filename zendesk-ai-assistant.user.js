@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.10.4
+// @version      0.10.5
 // @description  Zendesk AI support assistant with built-in ticket search, export, Supabase KB upload, and versioned reference knowledge.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -22,6 +22,7 @@
     const APP_ID = 'zae-cloud-assistant';
     const SUPABASE_BASE = 'https://gdpukysdcaoxtgqjkesv.supabase.co/functions/v1';
     const CHAT_ENDPOINT = `${SUPABASE_BASE}/zendesk-chat`;
+    const FEEDBACK_ENDPOINT = `${SUPABASE_BASE}/chat-feedback`;
     const IMPORT_ENDPOINT = `${SUPABASE_BASE}/import-zendesk`;
     const REFERENCE_IMPORT_ENDPOINT = `${SUPABASE_BASE}/import-reference-knowledge`;
     const PASSWORD_LOGIN_ENDPOINT = `${SUPABASE_BASE}/password-login`;
@@ -559,6 +560,33 @@
         return solution ? { ticketId, solution, url: `${location.origin}/agent/tickets/${ticketId}` } : null;
     }
 
+    async function reportIrrelevantFirstReply() {
+        if (state.feedbackHandled) return;
+        state.feedbackHandled = true;
+        renderChat();
+
+        const ticketId = currentTicketId();
+        const question = state.messages.find(message => message.role === 'user')?.content || '';
+        const response = state.messages.find(message => message.role === 'assistant');
+        if (!ticketId || !question || !response?.content) {
+            setStatus('Could not save feedback for this ticket.', false);
+            return;
+        }
+
+        try {
+            await callSupabase(FEEDBACK_ENDPOINT, {
+                ticket_id: ticketId,
+                feedback_type: 'not_relevant',
+                question,
+                answer: response.content,
+                approved_issue_id: response.approvedSolution?.issue_id || null,
+            });
+            setStatus('Feedback saved. This response is marked as not relevant.', true);
+        } catch (error) {
+            setStatus(error?.message || 'Could not save feedback.', false);
+        }
+    }
+
     function renderFirstReplyFeedback() {
         const box = document.createElement('div');
         box.className = 'zaec-feedback';
@@ -582,7 +610,10 @@
             state.feedbackHandled = true;
             sendMessage('The first suggestion did not solve the ticket. Please investigate further and give the next best checks.');
         };
-        actions.append(worked, moreHelp);
+        const notRelevant = document.createElement('button');
+        notRelevant.textContent = "No, the response wasn't relevant";
+        notRelevant.onclick = () => { void reportIrrelevantFirstReply(); };
+        actions.append(worked, moreHelp, notRelevant);
         box.append(label, actions);
         return box;
     }
