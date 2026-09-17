@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.10.0
+// @version      0.10.1
 // @description  Zendesk AI support assistant with built-in ticket search, export, Supabase KB upload, and versioned reference knowledge.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -77,6 +77,7 @@
       #${APP_ID} label{display:grid;gap:4px;color:rgba(255,255,255,.84);min-width:0}#${APP_ID} input,#${APP_ID} select,#${APP_ID} textarea{width:100%;min-width:0;border:1px solid rgba(255,255,255,.12);border-radius:6px;background:rgba(0,0,0,.18);color:#fff;padding:7px 8px;outline:none}#${APP_ID} input,#${APP_ID} select{min-height:34px}.zaec-compose textarea{min-height:76px;max-height:180px}.zaec-export-body textarea{min-height:48px;max-height:110px}
       .zaec-table-wrap{margin-top:9px;flex:1 0 220px;min-height:220px;overflow:auto;border:1px solid rgba(148,210,168,.16);border-radius:7px}.zaec-table-wrap table{width:100%;border-collapse:collapse;min-width:980px}.zaec-table-wrap th{position:sticky;top:0;z-index:1;background:rgba(20,63,42,.98);text-align:left}.zaec-table-wrap th,.zaec-table-wrap td{padding:7px 8px;border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top}.zaec-link{color:#d9f5e2;text-decoration:none;font-weight:600}.zaec-pill{display:inline-block;padding:2px 6px;border-radius:999px;background:rgba(125,200,148,.15);border:1px solid rgba(145,219,168,.18)}
       .zaec-account{display:flex;align-items:center;gap:7px;padding:3px 5px!important;border-radius:999px!important;background:rgba(117,190,139,.14)!important;border-color:rgba(155,229,178,.28)!important}.zaec-account:hover{background:rgba(117,190,139,.22)!important}.zaec-account-initials{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:#b6e6c3;color:#123421;font-size:10px;font-weight:800;letter-spacing:.03em}.zaec-account-label{font-size:11px;color:rgba(255,255,255,.82)}
+      .zaec-account-wrap{position:relative}.zaec-account-menu{position:absolute;top:calc(100% + 7px);right:0;display:none;width:220px;padding:10px;border:1px solid rgba(155,229,178,.28);border-radius:9px;background:rgba(15,48,32,.98);box-shadow:0 12px 30px rgba(0,0,0,.34);backdrop-filter:blur(12px)}.zaec-account-menu.open{display:block}.zaec-account-email{margin:1px 2px 9px;color:rgba(255,255,255,.74);font-size:11px;overflow-wrap:anywhere}.zaec-account-menu button{width:100%;text-align:left;background:rgba(255,255,255,.08)}
       #zaec-login-overlay{position:fixed;inset:0;z-index:2147483647;display:none;place-items:center;padding:16px;background:rgba(3,19,11,.66);backdrop-filter:blur(5px)}#zaec-login-overlay.open{display:grid}#zaec-login-modal{width:min(420px,100%);padding:22px;border:1px solid rgba(155,229,178,.34);border-radius:14px;background:linear-gradient(145deg,rgba(28,78,53,.98),rgba(12,42,27,.98));box-shadow:0 20px 56px rgba(0,0,0,.48);color:#fff}#zaec-login-modal h2{margin:0;font-size:18px}#zaec-login-modal p{margin:6px 0 17px;color:rgba(255,255,255,.68);font-size:12px}#zaec-login-modal label{display:grid;gap:6px;margin-top:12px;font-size:12px;color:rgba(255,255,255,.88)}#zaec-login-modal input{width:100%;padding:10px;border:1px solid rgba(155,229,178,.3);border-radius:7px;background:rgba(0,0,0,.2);color:#fff;outline:none}#zaec-login-modal input:focus{border-color:#b6e6c3;box-shadow:0 0 0 3px rgba(182,230,195,.12)}#zaec-login-error{min-height:18px;margin-top:10px;color:#ffd3c8;font-size:12px}#zaec-login-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}#zaec-login-actions button{padding:8px 12px;border:1px solid rgba(155,229,178,.32);border-radius:7px;cursor:pointer;color:#fff;background:rgba(255,255,255,.08)}#zaec-login-submit{background:#b6e6c3!important;color:#123421!important;font-weight:700}
       @media(max-width:700px){#${APP_ID},#${APP_ID}.zaec-export-mode{top:6px;right:6px;width:calc(100vw - 12px);height:calc(100vh - 12px)}.zaec-grid{grid-template-columns:1fr}.zaec-table-wrap{min-height:260px}}
     `;
@@ -90,7 +91,7 @@
     const panel = document.createElement('div');
     panel.id = APP_ID;
     panel.innerHTML = `
-      <div class="zaec-head"><div><div class="zaec-title">Zendesk AI Assistant</div><div class="zaec-sub" id="zaec-ticket-label">Ready</div></div><div class="zaec-head-actions"><button id="zaec-account" class="zaec-account" title="Sign in or switch user"><span id="zaec-account-initials" class="zaec-account-initials">?</span><span id="zaec-account-label" class="zaec-account-label">Sign in</span></button><button id="zaec-settings" title="Sign in or switch user">⚙</button><button id="zaec-close">×</button></div></div>
+      <div class="zaec-head"><div><div class="zaec-title">Zendesk AI Assistant</div><div class="zaec-sub" id="zaec-ticket-label">Ready</div></div><div class="zaec-head-actions"><div class="zaec-account-wrap"><button id="zaec-account" class="zaec-account" title="Sign in"><span id="zaec-account-initials" class="zaec-account-initials">?</span><span id="zaec-account-label" class="zaec-account-label">Sign in</span></button><div id="zaec-account-menu" class="zaec-account-menu"><div id="zaec-account-email" class="zaec-account-email"></div><button id="zaec-logout">Log out</button></div></div><button id="zaec-settings" title="Sign in or switch user">⚙</button><button id="zaec-close">×</button></div></div>
       <div class="zaec-tabs"><button id="zaec-tab-chat" class="zaec-tab active">Chat</button><button id="zaec-tab-export" class="zaec-tab">Export</button></div>
       <div id="zaec-view-chat" class="zaec-view zaec-chat-view">
         <div class="zaec-tools"><button id="zaec-add-kb" class="zaec-primary">Add current ticket to KB</button><button id="zaec-clear">Clear chat</button></div>
@@ -118,7 +119,11 @@
     toggle.onclick = () => panel.style.display = panel.style.display === 'flex' ? 'none' : 'flex';
     $('#zaec-close').onclick = () => panel.style.display = 'none';
     $('#zaec-settings').onclick = signInWithPassword;
-    $('#zaec-account').onclick = signInWithPassword;
+    $('#zaec-account').onclick = toggleAccountMenu;
+    $('#zaec-logout').onclick = logOut;
+    document.addEventListener('click', event => {
+        if (!event.target.closest('.zaec-account-wrap')) closeAccountMenu();
+    });
     $('#zaec-clear').onclick = clearChat;
     $('#zaec-add-kb').onclick = addCurrentTicketToKnowledgeBase;
     $('#zaec-send').onclick = sendMessage;
@@ -197,7 +202,31 @@
         const email = token ? decodeTokenPayload(token)?.email : '';
         $('#zaec-account-initials').textContent = initialsForEmail(email);
         $('#zaec-account-label').textContent = email ? initialsForEmail(email) : 'Sign in';
-        $('#zaec-account').title = email ? `Signed in as ${email}. Click to switch user.` : 'Sign in';
+        $('#zaec-account').title = email ? `Signed in as ${email}.` : 'Sign in';
+        $('#zaec-account-email').textContent = email || '';
+        if (!email) closeAccountMenu();
+    }
+
+    function closeAccountMenu() {
+        $('#zaec-account-menu')?.classList.remove('open');
+    }
+
+    function toggleAccountMenu(event) {
+        event?.stopPropagation();
+        const token = getToken();
+        if (!token) {
+            signInWithPassword();
+            return;
+        }
+        updateAccountUi();
+        $('#zaec-account-menu').classList.toggle('open');
+    }
+
+    function logOut() {
+        GM_setValue(TOKEN_KEY, '');
+        closeAccountMenu();
+        updateAccountUi();
+        setStatus('Logged out.', true);
     }
 
     function ensureLoginModal() {
