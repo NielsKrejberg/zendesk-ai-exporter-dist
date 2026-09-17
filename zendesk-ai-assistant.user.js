@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.9.0
+// @version      0.10.0
 // @description  Zendesk AI support assistant with built-in ticket search, export, Supabase KB upload, and versioned reference knowledge.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -76,6 +76,8 @@
       .zaec-reference-box{padding:9px 10px;border:1px solid rgba(148,210,168,.18);border-radius:8px;background:rgba(0,0,0,.11)}.zaec-reference-row{margin-top:7px;flex-wrap:wrap}.zaec-reference-row input[type=file]{flex:1;min-width:260px}
       #${APP_ID} label{display:grid;gap:4px;color:rgba(255,255,255,.84);min-width:0}#${APP_ID} input,#${APP_ID} select,#${APP_ID} textarea{width:100%;min-width:0;border:1px solid rgba(255,255,255,.12);border-radius:6px;background:rgba(0,0,0,.18);color:#fff;padding:7px 8px;outline:none}#${APP_ID} input,#${APP_ID} select{min-height:34px}.zaec-compose textarea{min-height:76px;max-height:180px}.zaec-export-body textarea{min-height:48px;max-height:110px}
       .zaec-table-wrap{margin-top:9px;flex:1 0 220px;min-height:220px;overflow:auto;border:1px solid rgba(148,210,168,.16);border-radius:7px}.zaec-table-wrap table{width:100%;border-collapse:collapse;min-width:980px}.zaec-table-wrap th{position:sticky;top:0;z-index:1;background:rgba(20,63,42,.98);text-align:left}.zaec-table-wrap th,.zaec-table-wrap td{padding:7px 8px;border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top}.zaec-link{color:#d9f5e2;text-decoration:none;font-weight:600}.zaec-pill{display:inline-block;padding:2px 6px;border-radius:999px;background:rgba(125,200,148,.15);border:1px solid rgba(145,219,168,.18)}
+      .zaec-account{display:flex;align-items:center;gap:7px;padding:3px 5px!important;border-radius:999px!important;background:rgba(117,190,139,.14)!important;border-color:rgba(155,229,178,.28)!important}.zaec-account:hover{background:rgba(117,190,139,.22)!important}.zaec-account-initials{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:#b6e6c3;color:#123421;font-size:10px;font-weight:800;letter-spacing:.03em}.zaec-account-label{font-size:11px;color:rgba(255,255,255,.82)}
+      #zaec-login-overlay{position:fixed;inset:0;z-index:2147483647;display:none;place-items:center;padding:16px;background:rgba(3,19,11,.66);backdrop-filter:blur(5px)}#zaec-login-overlay.open{display:grid}#zaec-login-modal{width:min(420px,100%);padding:22px;border:1px solid rgba(155,229,178,.34);border-radius:14px;background:linear-gradient(145deg,rgba(28,78,53,.98),rgba(12,42,27,.98));box-shadow:0 20px 56px rgba(0,0,0,.48);color:#fff}#zaec-login-modal h2{margin:0;font-size:18px}#zaec-login-modal p{margin:6px 0 17px;color:rgba(255,255,255,.68);font-size:12px}#zaec-login-modal label{display:grid;gap:6px;margin-top:12px;font-size:12px;color:rgba(255,255,255,.88)}#zaec-login-modal input{width:100%;padding:10px;border:1px solid rgba(155,229,178,.3);border-radius:7px;background:rgba(0,0,0,.2);color:#fff;outline:none}#zaec-login-modal input:focus{border-color:#b6e6c3;box-shadow:0 0 0 3px rgba(182,230,195,.12)}#zaec-login-error{min-height:18px;margin-top:10px;color:#ffd3c8;font-size:12px}#zaec-login-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}#zaec-login-actions button{padding:8px 12px;border:1px solid rgba(155,229,178,.32);border-radius:7px;cursor:pointer;color:#fff;background:rgba(255,255,255,.08)}#zaec-login-submit{background:#b6e6c3!important;color:#123421!important;font-weight:700}
       @media(max-width:700px){#${APP_ID},#${APP_ID}.zaec-export-mode{top:6px;right:6px;width:calc(100vw - 12px);height:calc(100vh - 12px)}.zaec-grid{grid-template-columns:1fr}.zaec-table-wrap{min-height:260px}}
     `;
     document.head.appendChild(style);
@@ -88,7 +90,7 @@
     const panel = document.createElement('div');
     panel.id = APP_ID;
     panel.innerHTML = `
-      <div class="zaec-head"><div><div class="zaec-title">Zendesk AI Assistant</div><div class="zaec-sub" id="zaec-ticket-label">Ready</div></div><div class="zaec-head-actions"><button id="zaec-settings" title="Configure access token">⚙</button><button id="zaec-close">×</button></div></div>
+      <div class="zaec-head"><div><div class="zaec-title">Zendesk AI Assistant</div><div class="zaec-sub" id="zaec-ticket-label">Ready</div></div><div class="zaec-head-actions"><button id="zaec-account" class="zaec-account" title="Sign in or switch user"><span id="zaec-account-initials" class="zaec-account-initials">?</span><span id="zaec-account-label" class="zaec-account-label">Sign in</span></button><button id="zaec-settings" title="Sign in or switch user">⚙</button><button id="zaec-close">×</button></div></div>
       <div class="zaec-tabs"><button id="zaec-tab-chat" class="zaec-tab active">Chat</button><button id="zaec-tab-export" class="zaec-tab">Export</button></div>
       <div id="zaec-view-chat" class="zaec-view zaec-chat-view">
         <div class="zaec-tools"><button id="zaec-add-kb" class="zaec-primary">Add current ticket to KB</button><button id="zaec-clear">Clear chat</button></div>
@@ -116,6 +118,7 @@
     toggle.onclick = () => panel.style.display = panel.style.display === 'flex' ? 'none' : 'flex';
     $('#zaec-close').onclick = () => panel.style.display = 'none';
     $('#zaec-settings').onclick = signInWithPassword;
+    $('#zaec-account').onclick = signInWithPassword;
     $('#zaec-clear').onclick = clearChat;
     $('#zaec-add-kb').onclick = addCurrentTicketToKnowledgeBase;
     $('#zaec-send').onclick = sendMessage;
@@ -139,6 +142,7 @@
     $('#zaec-export-csv').onclick = () => exportCsv(getSelectedTickets());
 
     setDefaultFilters();
+    updateAccountUi();
     refreshContext();
     setInterval(refreshContext, 800);
 
@@ -165,80 +169,123 @@
         if (!state.busy) $('#zaec-add-kb').disabled = !id;
     }
 
+    function decodeTokenPayload(token) {
+        try {
+            const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+            return JSON.parse(atob(part));
+        } catch { return null; }
+    }
+
     function getToken() {
         const token = String(GM_getValue(TOKEN_KEY, '') || '').trim();
-        try {
-            const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
-            if (!payload.exp || payload.exp * 1000 <= Date.now() + 30000) { GM_setValue(TOKEN_KEY, ''); return ''; }
-        } catch { GM_setValue(TOKEN_KEY, ''); return ''; }
+        const payload = decodeTokenPayload(token);
+        if (!payload?.exp || payload.exp * 1000 <= Date.now() + 30000) {
+            if (token) GM_setValue(TOKEN_KEY, '');
+            return '';
+        }
         return token;
     }
 
-    function captureLoginCallback() {
-        const params = new URLSearchParams(location.hash.slice(1));
-        const token = params.get('access_token');
-        if (!token) return;
-        GM_setValue(TOKEN_KEY, token);
-        history.replaceState(null, '', location.pathname + location.search);
-        setTimeout(() => setStatus('Signed in securely', true), 0);
+    function initialsForEmail(email) {
+        const localPart = String(email || '').split('@')[0];
+        const initials = localPart.split(/[._-]+/).filter(Boolean).map(part => part[0]).join('').slice(0, 2);
+        return (initials || '?').toUpperCase();
     }
 
-    function promptForPassword(email) {
-        return new Promise(resolve => {
-            const overlay = document.createElement('div');
-            const card = document.createElement('div');
-            const title = document.createElement('strong');
-            const hint = document.createElement('div');
-            const input = document.createElement('input');
-            const actions = document.createElement('div');
-            const cancel = document.createElement('button');
-            const submit = document.createElement('button');
-
-            Object.assign(overlay.style, { position: 'fixed', inset: '0', zIndex: '2147483647', background: 'rgba(0,0,0,.55)', display: 'grid', placeItems: 'center' });
-            Object.assign(card.style, { width: 'min(390px,calc(100vw - 32px))', padding: '20px', borderRadius: '12px', background: 'rgba(15,48,32,.97)', border: '1px solid rgba(148,210,168,.35)', color: '#fff', boxShadow: '0 16px 44px rgba(0,0,0,.4)' });
-            Object.assign(input.style, { width: '100%', marginTop: '14px', padding: '10px', borderRadius: '7px', border: '1px solid rgba(148,210,168,.35)', background: 'rgba(255,255,255,.1)', color: '#fff' });
-            Object.assign(actions.style, { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' });
-            [cancel, submit].forEach(button => Object.assign(button.style, { padding: '8px 12px', borderRadius: '7px', border: '1px solid rgba(148,210,168,.35)', cursor: 'pointer' }));
-            cancel.style.background = 'transparent'; cancel.style.color = '#fff';
-            submit.style.background = '#b6e6c3'; submit.style.color = '#123421';
-
-            title.textContent = 'Sign in';
-            hint.textContent = `Enter the password for ${email}. It is never stored in the script.`;
-            input.type = 'password'; input.autocomplete = 'current-password';
-            cancel.textContent = 'Cancel'; submit.textContent = 'Sign in';
-            actions.append(cancel, submit); card.append(title, hint, input, actions); overlay.append(card); document.body.append(overlay);
-
-            const close = value => { overlay.remove(); resolve(value); };
-            cancel.onclick = () => close('');
-            submit.onclick = () => close(input.value);
-            input.onkeydown = event => { if (event.key === 'Enter') close(input.value); if (event.key === 'Escape') close(''); };
-            setTimeout(() => input.focus(), 0);
-        });
+    function updateAccountUi() {
+        const token = getToken();
+        const email = token ? decodeTokenPayload(token)?.email : '';
+        $('#zaec-account-initials').textContent = initialsForEmail(email);
+        $('#zaec-account-label').textContent = email ? initialsForEmail(email) : 'Sign in';
+        $('#zaec-account').title = email ? `Signed in as ${email}. Click to switch user.` : 'Sign in';
     }
 
-    async function signInWithPassword() {
-        const email = prompt('Enter your Bolia e-mail address.');
-        if (email === null || !email.trim()) return;
-        const normalizedEmail = email.trim().toLowerCase();
-        const password = await promptForPassword(normalizedEmail);
-        if (!password) return;
+    function ensureLoginModal() {
+        let overlay = document.getElementById('zaec-login-overlay');
+        if (overlay) return overlay;
 
+        overlay = document.createElement('div');
+        overlay.id = 'zaec-login-overlay';
+        overlay.innerHTML = `
+          <form id="zaec-login-modal" novalidate>
+            <h2>Sign in to AI Assistant</h2>
+            <p>Use your individual Bolia account. Your password is never stored in the script.</p>
+            <label>Email<input id="zaec-login-email" type="email" autocomplete="username" placeholder="name@bolia.com" required></label>
+            <label>Password<input id="zaec-login-password" type="password" autocomplete="current-password" required></label>
+            <div id="zaec-login-error" role="alert" aria-live="polite"></div>
+            <div id="zaec-login-actions"><button type="button" id="zaec-login-cancel">Cancel</button><button type="submit" id="zaec-login-submit">Sign in</button></div>
+          </form>`;
+        document.body.appendChild(overlay);
+        overlay.addEventListener('click', event => { if (event.target === overlay) closeLoginModal(); });
+        overlay.querySelector('#zaec-login-cancel').onclick = closeLoginModal;
+        overlay.querySelector('#zaec-login-modal').onsubmit = event => {
+            event.preventDefault();
+            submitLoginModal();
+        };
+        overlay.addEventListener('keydown', event => { if (event.key === 'Escape') closeLoginModal(); });
+        return overlay;
+    }
+
+    function closeLoginModal() {
+        document.getElementById('zaec-login-overlay')?.classList.remove('open');
+    }
+
+    function signInWithPassword() {
+        const overlay = ensureLoginModal();
+        const token = getToken();
+        const email = token ? decodeTokenPayload(token)?.email : '';
+        const emailInput = overlay.querySelector('#zaec-login-email');
+        const passwordInput = overlay.querySelector('#zaec-login-password');
+        overlay.querySelector('#zaec-login-error').textContent = '';
+        emailInput.value = email || '';
+        passwordInput.value = '';
+        overlay.classList.add('open');
+        setTimeout(() => (email ? passwordInput : emailInput).focus(), 0);
+    }
+
+    function submitLoginModal() {
+        const overlay = ensureLoginModal();
+        const emailInput = overlay.querySelector('#zaec-login-email');
+        const passwordInput = overlay.querySelector('#zaec-login-password');
+        const error = overlay.querySelector('#zaec-login-error');
+        const submit = overlay.querySelector('#zaec-login-submit');
+        const email = emailInput.value.trim().toLowerCase();
+        const password = passwordInput.value;
+        if (!email || !emailInput.checkValidity() || !password) {
+            error.textContent = 'Enter your Bolia e-mail address and password.';
+            return;
+        }
+
+        error.textContent = '';
+        submit.disabled = true;
+        submit.textContent = 'Signing in…';
         GM_xmlhttpRequest({
             method: 'POST',
             url: PASSWORD_LOGIN_ENDPOINT,
             headers: { 'Content-Type': 'application/json' },
-            data: JSON.stringify({ email: normalizedEmail, password }),
+            data: JSON.stringify({ email, password }),
             onload: response => {
                 let data = {};
                 try { data = JSON.parse(response.responseText || '{}'); } catch {}
+                submit.disabled = false;
+                submit.textContent = 'Sign in';
                 if (response.status >= 200 && response.status < 300 && data.access_token) {
                     GM_setValue(TOKEN_KEY, data.access_token);
+                    passwordInput.value = '';
+                    closeLoginModal();
+                    updateAccountUi();
                     setStatus('Signed in securely', true);
                 } else {
-                    setStatus(data.error || 'Could not sign in.', false);
+                    passwordInput.value = '';
+                    error.textContent = data.error || 'Could not sign in. Check your details and try again.';
+                    passwordInput.focus();
                 }
             },
-            onerror: () => setStatus('Could not sign in.', false),
+            onerror: () => {
+                submit.disabled = false;
+                submit.textContent = 'Sign in';
+                error.textContent = 'Could not sign in. Please try again.';
+            },
         });
     }
 
