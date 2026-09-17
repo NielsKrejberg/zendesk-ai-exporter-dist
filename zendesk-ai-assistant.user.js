@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.8.0
+// @version      0.9.0
 // @description  Zendesk AI support assistant with built-in ticket search, export, Supabase KB upload, and versioned reference knowledge.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -23,10 +23,8 @@
     const CHAT_ENDPOINT = `${SUPABASE_BASE}/zendesk-chat`;
     const IMPORT_ENDPOINT = `${SUPABASE_BASE}/import-zendesk`;
     const REFERENCE_IMPORT_ENDPOINT = `${SUPABASE_BASE}/import-reference-knowledge`;
-    const LOGIN_ENDPOINT = `${SUPABASE_BASE}/request-login`;
-    const VERIFY_LOGIN_ENDPOINT = `${SUPABASE_BASE}/verify-login`;
+    const PASSWORD_LOGIN_ENDPOINT = `${SUPABASE_BASE}/password-login`;
     const TOKEN_KEY = 'zae_supabase_access_token';
-    const PENDING_EMAIL_KEY = 'zae_supabase_pending_email';
 
     function captureLoginCallbackEarly() {
         const params = new URLSearchParams(location.hash.slice(1));
@@ -117,7 +115,7 @@
     const $ = s => panel.querySelector(s);
     toggle.onclick = () => panel.style.display = panel.style.display === 'flex' ? 'none' : 'flex';
     $('#zaec-close').onclick = () => panel.style.display = 'none';
-    $('#zaec-settings').onclick = requestLoginCode;
+    $('#zaec-settings').onclick = signInWithPassword;
     $('#zaec-clear').onclick = clearChat;
     $('#zaec-add-kb').onclick = addCurrentTicketToKnowledgeBase;
     $('#zaec-send').onclick = sendMessage;
@@ -185,61 +183,70 @@
         setTimeout(() => setStatus('Signed in securely', true), 0);
     }
 
-    function verifyLoginCode(email, code) {
+    function promptForPassword(email) {
+        return new Promise(resolve => {
+            const overlay = document.createElement('div');
+            const card = document.createElement('div');
+            const title = document.createElement('strong');
+            const hint = document.createElement('div');
+            const input = document.createElement('input');
+            const actions = document.createElement('div');
+            const cancel = document.createElement('button');
+            const submit = document.createElement('button');
+
+            Object.assign(overlay.style, { position: 'fixed', inset: '0', zIndex: '2147483647', background: 'rgba(0,0,0,.55)', display: 'grid', placeItems: 'center' });
+            Object.assign(card.style, { width: 'min(390px,calc(100vw - 32px))', padding: '20px', borderRadius: '12px', background: 'rgba(15,48,32,.97)', border: '1px solid rgba(148,210,168,.35)', color: '#fff', boxShadow: '0 16px 44px rgba(0,0,0,.4)' });
+            Object.assign(input.style, { width: '100%', marginTop: '14px', padding: '10px', borderRadius: '7px', border: '1px solid rgba(148,210,168,.35)', background: 'rgba(255,255,255,.1)', color: '#fff' });
+            Object.assign(actions.style, { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' });
+            [cancel, submit].forEach(button => Object.assign(button.style, { padding: '8px 12px', borderRadius: '7px', border: '1px solid rgba(148,210,168,.35)', cursor: 'pointer' }));
+            cancel.style.background = 'transparent'; cancel.style.color = '#fff';
+            submit.style.background = '#b6e6c3'; submit.style.color = '#123421';
+
+            title.textContent = 'Sign in';
+            hint.textContent = `Enter the password for ${email}. It is never stored in the script.`;
+            input.type = 'password'; input.autocomplete = 'current-password';
+            cancel.textContent = 'Cancel'; submit.textContent = 'Sign in';
+            actions.append(cancel, submit); card.append(title, hint, input, actions); overlay.append(card); document.body.append(overlay);
+
+            const close = value => { overlay.remove(); resolve(value); };
+            cancel.onclick = () => close('');
+            submit.onclick = () => close(input.value);
+            input.onkeydown = event => { if (event.key === 'Enter') close(input.value); if (event.key === 'Escape') close(''); };
+            setTimeout(() => input.focus(), 0);
+        });
+    }
+
+    async function signInWithPassword() {
+        const email = prompt('Enter your Bolia e-mail address.');
+        if (email === null || !email.trim()) return;
+        const normalizedEmail = email.trim().toLowerCase();
+        const password = await promptForPassword(normalizedEmail);
+        if (!password) return;
+
         GM_xmlhttpRequest({
             method: 'POST',
-            url: VERIFY_LOGIN_ENDPOINT,
+            url: PASSWORD_LOGIN_ENDPOINT,
             headers: { 'Content-Type': 'application/json' },
-            data: JSON.stringify({ email, code }),
+            data: JSON.stringify({ email: normalizedEmail, password }),
             onload: response => {
                 let data = {};
                 try { data = JSON.parse(response.responseText || '{}'); } catch {}
                 if (response.status >= 200 && response.status < 300 && data.access_token) {
                     GM_setValue(TOKEN_KEY, data.access_token);
-                    GM_setValue(PENDING_EMAIL_KEY, '');
                     setStatus('Signed in securely', true);
                 } else {
-                    setStatus(data.error || 'Could not verify the sign-in code.', false);
+                    setStatus(data.error || 'Could not sign in.', false);
                 }
             },
-            onerror: () => setStatus('Could not verify the sign-in code.', false),
-        });
-    }
-
-    function requestLoginCode() {
-        const pendingEmail = String(GM_getValue(PENDING_EMAIL_KEY, '') || '').trim();
-        if (pendingEmail) {
-            const code = prompt(`Enter the six-digit code sent to ${pendingEmail}. Cancel to request a new code.`);
-            if (code !== null && code.trim()) { verifyLoginCode(pendingEmail, code.trim()); return; }
-        }
-
-        const email = prompt('Enter your Bolia e-mail address. A six-digit sign-in code is sent only after you request it.');
-        if (email === null || !email.trim()) return;
-        const normalizedEmail = email.trim().toLowerCase();
-        GM_xmlhttpRequest({
-            method: 'POST',
-            url: LOGIN_ENDPOINT,
-            headers: { 'Content-Type': 'application/json' },
-            data: JSON.stringify({ email: normalizedEmail }),
-            onload: response => {
-                let data = {};
-                try { data = JSON.parse(response.responseText || '{}'); } catch {}
-                if (response.status >= 200 && response.status < 300) {
-                    GM_setValue(PENDING_EMAIL_KEY, normalizedEmail);
-                    setStatus('Code sent. Click Settings again to enter the six-digit code.', true);
-                } else {
-                    setStatus(data.error || 'Could not request a sign-in code.', false);
-                }
-            },
-            onerror: () => setStatus('Could not request a sign-in code.', false),
+            onerror: () => setStatus('Could not sign in.', false),
         });
     }
 
     function requireToken() {
         const token = getToken();
         if (!token) {
-            requestLoginCode();
-            throw new Error('Request a sign-in code, then click Settings again to enter it.');
+            signInWithPassword();
+            throw new Error('Sign in with your individual password, then try again.');
         }
         return token;
     }
