@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.6.3
+// @version      0.7.0
 // @description  Zendesk AI support assistant with built-in ticket search, export, Supabase KB upload, and versioned reference knowledge.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -23,9 +23,12 @@
     const CHAT_ENDPOINT = `${SUPABASE_BASE}/zendesk-chat`;
     const IMPORT_ENDPOINT = `${SUPABASE_BASE}/import-zendesk`;
     const REFERENCE_IMPORT_ENDPOINT = `${SUPABASE_BASE}/import-reference-knowledge`;
-    const TOKEN_KEY = 'zae_supabase_import_token';
+    const LOGIN_ENDPOINT = `${SUPABASE_BASE}/request-login`;
+    const TOKEN_KEY = 'zae_supabase_access_token';
     const COMMENT_CONCURRENCY = 4;
     const IMPORT_BATCH_SIZE = 20;
+
+    captureLoginCallback();
 
     if (document.getElementById(APP_ID)) return;
 
@@ -103,7 +106,7 @@
     const $ = s => panel.querySelector(s);
     toggle.onclick = () => panel.style.display = panel.style.display === 'flex' ? 'none' : 'flex';
     $('#zaec-close').onclick = () => panel.style.display = 'none';
-    $('#zaec-settings').onclick = configureToken;
+    $('#zaec-settings').onclick = requestLoginLink;
     $('#zaec-clear').onclick = clearChat;
     $('#zaec-add-kb').onclick = addCurrentTicketToKnowledgeBase;
     $('#zaec-send').onclick = sendMessage;
@@ -153,17 +156,51 @@
         if (!state.busy) $('#zaec-add-kb').disabled = !id;
     }
 
-    function getToken() { return String(GM_getValue(TOKEN_KEY, '') || '').trim(); }
-    function configureToken() {
-        const value = prompt('Enter your ZENDESK_IMPORT_TOKEN from Supabase. It is stored only in Tampermonkey on this browser.', getToken());
-        if (value === null) return;
-        GM_setValue(TOKEN_KEY, value.trim());
-        setStatus(value.trim() ? 'Token saved' : 'Token cleared', !!value.trim());
+    function getToken() {
+        const token = String(GM_getValue(TOKEN_KEY, '') || '').trim();
+        try {
+            const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+            if (!payload.exp || payload.exp * 1000 <= Date.now() + 30000) { GM_setValue(TOKEN_KEY, ''); return ''; }
+        } catch { GM_setValue(TOKEN_KEY, ''); return ''; }
+        return token;
     }
+
+    function captureLoginCallback() {
+        const params = new URLSearchParams(location.hash.slice(1));
+        const token = params.get('access_token');
+        if (!token) return;
+        GM_setValue(TOKEN_KEY, token);
+        history.replaceState(null, '', location.pathname + location.search);
+        setTimeout(() => setStatus('Signed in securely', true), 0);
+    }
+
+    function requestLoginLink() {
+        const email = prompt('Enter your Bolia e-mail address. A sign-in link is sent only after you request it.');
+        if (email === null || !email.trim()) return;
+        GM_xmlhttpRequest({
+            method: 'POST',
+            url: LOGIN_ENDPOINT,
+            headers: { 'Content-Type': 'application/json' },
+            data: JSON.stringify({ email: email.trim(), redirectTo: location.origin + location.pathname + location.search }),
+            onload: response => {
+                let data = {};
+                try { data = JSON.parse(response.responseText || '{}'); } catch {}
+                if (response.status >= 200 && response.status < 300) {
+                    setStatus(data.message || 'If your account is approved, a sign-in link has been sent.', true);
+                } else {
+                    setStatus(data.error || 'Could not request a sign-in link.', false);
+                }
+            },
+            onerror: () => setStatus('Could not request a sign-in link.', false),
+        });
+    }
+
     function requireToken() {
-        let token = getToken();
-        if (!token) { configureToken(); token = getToken(); }
-        if (!token) throw new Error('No Supabase access token configured.');
+        const token = getToken();
+        if (!token) {
+            requestLoginLink();
+            throw new Error('Sign-in link requested. Open it from your e-mail, then try again.');
+        }
         return token;
     }
 
@@ -237,7 +274,7 @@
         return new Promise((resolve, reject) => {
             GM_xmlhttpRequest({
                 method: 'POST', url: endpoint,
-                headers: { 'Content-Type': 'application/json', 'x-import-token': token },
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                 data: JSON.stringify(body), timeout,
                 onload: response => {
                     let data = null;
