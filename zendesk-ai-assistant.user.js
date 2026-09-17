@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.10.2
+// @version      0.10.3
 // @description  Zendesk AI support assistant with built-in ticket search, export, Supabase KB upload, and versioned reference knowledge.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
 // @updateURL    https://raw.githubusercontent.com/NielsKrejberg/zendesk-ai-exporter-dist/main/zendesk-ai-assistant.meta.js
 // @downloadURL  https://raw.githubusercontent.com/NielsKrejberg/zendesk-ai-exporter-dist/main/zendesk-ai-assistant.user.js
 // @match        https://*.zendesk.com/*
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=zendesk.com
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
@@ -70,6 +71,7 @@
       .zaec-tools{padding:8px 11px;border-bottom:1px solid rgba(148,210,168,.14);flex-wrap:wrap}.zaec-status{margin-left:auto;color:rgba(255,255,255,.56);font-size:11px;max-width:420px;text-align:right;overflow-wrap:anywhere}.zaec-status-panel{min-height:30px;margin:0 0 8px;padding:6px 8px;display:flex;align-items:center;gap:8px;border:1px solid rgba(148,210,168,.12);border-radius:7px;background:rgba(0,0,0,.10);color:rgba(255,255,255,.66);font-size:11px;overflow-wrap:anywhere;transition:background .18s ease,border-color .18s ease}.zaec-status-panel.zaec-working{background:rgba(117,190,139,.10);border-color:rgba(155,229,178,.24);color:#dff6e6}.zaec-status-panel.zaec-working::before{content:'';width:13px;height:13px;flex:0 0 13px;border:2px solid rgba(223,246,230,.22);border-top-color:#dff6e6;border-radius:50%;animation:zaec-spin .8s linear infinite}.zaec-status-panel.zaec-working::after{content:'•••';margin-left:auto;letter-spacing:2px;animation:zaec-pulse 1.2s ease-in-out infinite}.zaec-error{color:#ffd3c8}.zaec-ok{color:#d9f5e2}@keyframes zaec-spin{to{transform:rotate(360deg)}}@keyframes zaec-pulse{0%,100%{opacity:.25}50%{opacity:1}}
       .zaec-chat{flex:1;min-height:0;overflow:auto;padding:12px}.zaec-msg{margin:0 0 11px;padding:9px 10px;border-radius:9px;white-space:pre-wrap;overflow-wrap:anywhere}.zaec-user{margin-left:45px;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.10)}.zaec-assistant{margin-right:28px;background:rgba(37,84,57,.54);border:1px solid rgba(148,210,168,.16)}
       .zaec-role{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.48);margin-bottom:4px}.zaec-sources-details{margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,.10);white-space:normal}.zaec-sources-details summary{display:flex;align-items:center;gap:6px;width:max-content;max-width:100%;cursor:pointer;color:rgba(255,255,255,.66);font-size:11px;user-select:none;list-style:none}.zaec-sources-details summary::-webkit-details-marker{display:none}.zaec-sources-details summary::before{content:'▶';font-size:8px;transition:transform .14s ease}.zaec-sources-details[open] summary::before{transform:rotate(90deg)}.zaec-sources{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}.zaec-source{display:inline-flex;padding:3px 6px;border-radius:999px;border:1px solid rgba(155,229,178,.22);background:rgba(117,190,139,.12);color:#dff6e6;text-decoration:none;font-size:11px}.zaec-reference-source{border-style:dashed;background:rgba(172,214,185,.08)}
+      .zaec-approved-solution{margin:8px 0 10px;padding:10px;border:1px solid rgba(155,229,178,.45);border-radius:8px;background:rgba(117,190,139,.16);white-space:normal}.zaec-approved-title{font-size:11px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:#dff6e6}.zaec-approved-name{margin-top:3px;font-weight:700}.zaec-approved-body{margin:7px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}.zaec-approved-checks{margin:7px 0 0;padding-left:18px;color:rgba(255,255,255,.84)}.zaec-approved-checks li{margin:3px 0}
       .zaec-reuse-box{margin-top:9px;padding:9px 10px;border:1px solid rgba(155,229,178,.34);border-radius:8px;background:rgba(117,190,139,.11);white-space:normal}.zaec-reuse-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px}.zaec-reuse-title{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:#dff6e6}.zaec-reuse-title a{color:#dff6e6;text-decoration:none}.zaec-reuse-solution{padding:8px;border:1px solid rgba(255,255,255,.10);border-radius:6px;background:rgba(0,0,0,.15);white-space:pre-wrap;overflow-wrap:anywhere;color:rgba(255,255,255,.92)}.zaec-copy-solution{flex:0 0 auto;padding:5px 8px!important;font-size:11px}
       .zaec-empty{padding:20px 12px;color:rgba(255,255,255,.58);text-align:center}.zaec-compose{padding:10px;border-top:1px solid rgba(148,210,168,.18)}#${APP_ID} textarea{resize:vertical}.zaec-input-row{margin-top:7px;justify-content:flex-end}
       .zaec-export-body{padding:10px 12px 12px;overflow:auto;display:flex;flex-direction:column;min-height:0;height:100%}.zaec-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 10px}.zaec-section{margin-top:9px;flex:0 0 auto}.zaec-actions{flex-wrap:wrap;margin-top:9px}
@@ -481,7 +483,7 @@
                 const result = await callSupabase(CHAT_ENDPOINT, { ticket, message: text, history });
                 clearInterval(progressTimer);
                 const reuseSuggestion = result.reuseSuggestion || extractReuseSuggestion(result.answer || '');
-                state.messages.push({ role: 'assistant', content: result.answer || '', sources: result.sources || [], references: result.references || [], reuseSuggestion });
+                state.messages.push({ role: 'assistant', content: result.answer || '', sources: result.sources || [], references: result.references || [], approvedSolution: result.approvedSolution || null, reuseSuggestion });
                 renderChat();
                 const refCount = result.references?.length || 0;
                 setStatus(`${result.sources?.length || 0} historical tickets · ${refCount} reference records`, true);
@@ -502,7 +504,9 @@
         for (const msg of state.messages) {
             const box = document.createElement('div'); box.className = `zaec-msg ${msg.role === 'user' ? 'zaec-user' : 'zaec-assistant'}`;
             const role = document.createElement('div'); role.className = 'zaec-role'; role.textContent = msg.role === 'user' ? 'You' : 'Assistant';
-            const body = document.createElement('div'); renderAnswer(body, msg.content || ''); box.append(role, body);
+            const body = document.createElement('div'); renderAnswer(body, msg.content || ''); box.append(role);
+            if (msg.approvedSolution?.suggested_solution) box.appendChild(renderApprovedSolution(msg.approvedSolution));
+            box.appendChild(body);
             if (msg.reuseSuggestion?.solution) box.appendChild(renderReuseSuggestion(msg.reuseSuggestion));
             if ((Array.isArray(msg.sources) && msg.sources.length) || (Array.isArray(msg.references) && msg.references.length)) {
                 const details = document.createElement('details'); details.className = 'zaec-sources-details';
@@ -549,6 +553,34 @@
             solution = (blocks.find(block => block.includes(`[#${ticketId}]`)) || blocks[0] || '').trim();
         }
         return solution ? { ticketId, solution, url: `${location.origin}/agent/tickets/${ticketId}` } : null;
+    }
+
+    function renderApprovedSolution(solution) {
+        const box = document.createElement('div');
+        box.className = 'zaec-approved-solution';
+        const title = document.createElement('div');
+        title.className = 'zaec-approved-title';
+        title.textContent = 'Relevant approved solution';
+        const name = document.createElement('div');
+        name.className = 'zaec-approved-name';
+        name.textContent = solution.issue_name || 'Approved issue';
+        const body = document.createElement('div');
+        body.className = 'zaec-approved-body';
+        body.textContent = solution.suggested_solution || '';
+        box.append(title, name, body);
+
+        const checks = Array.isArray(solution.suggested_checks) ? solution.suggested_checks.filter(Boolean).slice(0, 3) : [];
+        if (checks.length) {
+            const list = document.createElement('ul');
+            list.className = 'zaec-approved-checks';
+            for (const check of checks) {
+                const item = document.createElement('li');
+                item.textContent = check;
+                list.appendChild(item);
+            }
+            box.appendChild(list);
+        }
+        return box;
     }
 
     function renderReuseSuggestion(suggestion) {
