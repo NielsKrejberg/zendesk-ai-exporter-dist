@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version      0.10.3
+// @version      0.10.4
 // @description  Zendesk AI support assistant with built-in ticket search, export, Supabase KB upload, and versioned reference knowledge.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -51,6 +51,7 @@
         selectedTicketIds: new Set(),
         exportRunning: false,
         exportCancelled: false,
+        feedbackHandled: false,
         groupCache: new Map(),
     };
 
@@ -73,7 +74,7 @@
       .zaec-role{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.48);margin-bottom:4px}.zaec-sources-details{margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,.10);white-space:normal}.zaec-sources-details summary{display:flex;align-items:center;gap:6px;width:max-content;max-width:100%;cursor:pointer;color:rgba(255,255,255,.66);font-size:11px;user-select:none;list-style:none}.zaec-sources-details summary::-webkit-details-marker{display:none}.zaec-sources-details summary::before{content:'▶';font-size:8px;transition:transform .14s ease}.zaec-sources-details[open] summary::before{transform:rotate(90deg)}.zaec-sources{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}.zaec-source{display:inline-flex;padding:3px 6px;border-radius:999px;border:1px solid rgba(155,229,178,.22);background:rgba(117,190,139,.12);color:#dff6e6;text-decoration:none;font-size:11px}.zaec-reference-source{border-style:dashed;background:rgba(172,214,185,.08)}
       .zaec-approved-solution{margin:8px 0 10px;padding:10px;border:1px solid rgba(155,229,178,.45);border-radius:8px;background:rgba(117,190,139,.16);white-space:normal}.zaec-approved-title{font-size:11px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:#dff6e6}.zaec-approved-name{margin-top:3px;font-weight:700}.zaec-approved-body{margin:7px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}.zaec-approved-checks{margin:7px 0 0;padding-left:18px;color:rgba(255,255,255,.84)}.zaec-approved-checks li{margin:3px 0}
       .zaec-reuse-box{margin-top:9px;padding:9px 10px;border:1px solid rgba(155,229,178,.34);border-radius:8px;background:rgba(117,190,139,.11);white-space:normal}.zaec-reuse-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px}.zaec-reuse-title{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:#dff6e6}.zaec-reuse-title a{color:#dff6e6;text-decoration:none}.zaec-reuse-solution{padding:8px;border:1px solid rgba(255,255,255,.10);border-radius:6px;background:rgba(0,0,0,.15);white-space:pre-wrap;overflow-wrap:anywhere;color:rgba(255,255,255,.92)}.zaec-copy-solution{flex:0 0 auto;padding:5px 8px!important;font-size:11px}
-      .zaec-empty{padding:20px 12px;color:rgba(255,255,255,.58);text-align:center}.zaec-compose{padding:10px;border-top:1px solid rgba(148,210,168,.18)}#${APP_ID} textarea{resize:vertical}.zaec-input-row{margin-top:7px;justify-content:flex-end}
+      .zaec-empty{padding:20px 12px;color:rgba(255,255,255,.58);text-align:center}.zaec-compose{padding:10px;border-top:1px solid rgba(148,210,168,.18)}.zaec-quick-actions,.zaec-feedback-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.zaec-quick-actions button,.zaec-feedback-actions button{padding:6px 8px!important;font-size:11px}.zaec-feedback{margin:8px 0 0;padding:8px;border-top:1px solid rgba(255,255,255,.10);color:rgba(255,255,255,.72);font-size:11px}.zaec-feedback-label{margin-bottom:6px;font-weight:700;color:#dff6e6}#${APP_ID} textarea{resize:vertical}.zaec-input-row{margin-top:7px;justify-content:flex-end}
       .zaec-export-body{padding:10px 12px 12px;overflow:auto;display:flex;flex-direction:column;min-height:0;height:100%}.zaec-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 10px}.zaec-section{margin-top:9px;flex:0 0 auto}.zaec-actions{flex-wrap:wrap;margin-top:9px}
       .zaec-reference-box{padding:9px 10px;border:1px solid rgba(148,210,168,.18);border-radius:8px;background:rgba(0,0,0,.11)}.zaec-reference-row{margin-top:7px;flex-wrap:wrap}.zaec-reference-row input[type=file]{flex:1;min-width:260px}
       #${APP_ID} label{display:grid;gap:4px;color:rgba(255,255,255,.84);min-width:0}#${APP_ID} input,#${APP_ID} select,#${APP_ID} textarea{width:100%;min-width:0;border:1px solid rgba(255,255,255,.12);border-radius:6px;background:rgba(0,0,0,.18);color:#fff;padding:7px 8px;outline:none}#${APP_ID} input,#${APP_ID} select{min-height:34px}.zaec-compose textarea{min-height:76px;max-height:180px}.zaec-export-body textarea{min-height:48px;max-height:110px}
@@ -98,7 +99,7 @@
       <div id="zaec-view-chat" class="zaec-view zaec-chat-view">
         <div class="zaec-tools"><button id="zaec-add-kb" class="zaec-primary">Add current ticket to KB</button><button id="zaec-clear">Clear chat</button></div>
         <div class="zaec-chat" id="zaec-chat"><div class="zaec-empty">Ask about the current ticket or use Export to add historical tickets and reference knowledge.</div></div>
-        <div class="zaec-compose"><div class="zaec-status-panel zaec-ok" id="zaec-status" role="status" aria-live="polite">Ready</div><textarea id="zaec-input" placeholder="Ask about this ticket…">Help me solve this</textarea><div class="zaec-input-row"><button id="zaec-send" class="zaec-primary">Send</button></div></div>
+        <div class="zaec-compose"><div class="zaec-status-panel zaec-ok" id="zaec-status" role="status" aria-live="polite">Ready</div><textarea id="zaec-input" placeholder="Ask about this ticket…">Help me solve this</textarea><div class="zaec-quick-actions"><button id="zaec-search-history">Search ticket history for solutions</button><button id="zaec-search-docs">Look through technical documentation</button></div><div class="zaec-input-row"><button id="zaec-send" class="zaec-primary">Send</button></div></div>
       </div>
       <div id="zaec-view-export" class="zaec-view zaec-export-view">
         <div class="zaec-export-body">
@@ -129,6 +130,8 @@
     $('#zaec-clear').onclick = clearChat;
     $('#zaec-add-kb').onclick = addCurrentTicketToKnowledgeBase;
     $('#zaec-send').onclick = sendMessage;
+    $('#zaec-search-history').onclick = () => sendMessage('Search ticket history for comparable cases and confirmed solutions. Show only the strongest matches and their practical resolution.');
+    $('#zaec-search-docs').onclick = () => sendMessage('Look through the technical documentation and reference knowledge for the relevant solution or configuration. Give the most practical next action.');
     $('#zaec-tab-chat').onclick = () => switchView('chat');
     $('#zaec-tab-export').onclick = () => switchView('export');
     $('#zaec-input').addEventListener('keydown', e => {
@@ -171,7 +174,7 @@
     function refreshContext() {
         const id = currentTicketId();
         toggle.style.display = 'block';
-        if (id !== state.ticketId) { state.ticketId = id; state.messages = []; renderChat(); }
+        if (id !== state.ticketId) { state.ticketId = id; state.messages = []; state.feedbackHandled = false; renderChat(); }
         $('#zaec-ticket-label').textContent = id ? `Ticket #${id}` : 'Zendesk';
         if (!state.busy) $('#zaec-add-kb').disabled = !id;
     }
@@ -508,6 +511,7 @@
             if (msg.approvedSolution?.suggested_solution) box.appendChild(renderApprovedSolution(msg.approvedSolution));
             box.appendChild(body);
             if (msg.reuseSuggestion?.solution) box.appendChild(renderReuseSuggestion(msg.reuseSuggestion));
+            if (msg.role === 'assistant' && !state.feedbackHandled && state.messages.length === 2) box.appendChild(renderFirstReplyFeedback());
             if ((Array.isArray(msg.sources) && msg.sources.length) || (Array.isArray(msg.references) && msg.references.length)) {
                 const details = document.createElement('details'); details.className = 'zaec-sources-details';
                 const summary = document.createElement('summary');
@@ -553,6 +557,34 @@
             solution = (blocks.find(block => block.includes(`[#${ticketId}]`)) || blocks[0] || '').trim();
         }
         return solution ? { ticketId, solution, url: `${location.origin}/agent/tickets/${ticketId}` } : null;
+    }
+
+    function renderFirstReplyFeedback() {
+        const box = document.createElement('div');
+        box.className = 'zaec-feedback';
+        const label = document.createElement('div');
+        label.className = 'zaec-feedback-label';
+        label.textContent = 'Did this solve the ticket?';
+        const actions = document.createElement('div');
+        actions.className = 'zaec-feedback-actions';
+        const worked = document.createElement('button');
+        worked.textContent = 'Yes, it worked';
+        worked.onclick = () => {
+            state.feedbackHandled = true;
+            state.messages.push({ role: 'user', content: 'The suggested solution worked.' });
+            renderChat();
+            setStatus('Marked as solved in this chat.', true);
+        };
+        const moreHelp = document.createElement('button');
+        moreHelp.className = 'zaec-primary';
+        moreHelp.textContent = 'No, I need more help';
+        moreHelp.onclick = () => {
+            state.feedbackHandled = true;
+            sendMessage('The first suggestion did not solve the ticket. Please investigate further and give the next best checks.');
+        };
+        actions.append(worked, moreHelp);
+        box.append(label, actions);
+        return box;
     }
 
     function renderApprovedSolution(solution) {
@@ -609,7 +641,7 @@
         } catch { return false; }
     }
 
-    function clearChat() { state.messages = []; renderChat(); setStatus('Ready', true); }
+    function clearChat() { state.messages = []; state.feedbackHandled = false; renderChat(); setStatus('Ready', true); }
     function sumRedactions(r) { return Object.values(r || {}).reduce((a, b) => a + Number(b || 0), 0); }
     function setBusy(value) { state.busy = value; $('#zaec-send').disabled = value; $('#zaec-add-kb').disabled = value || !currentTicketId(); $('#zaec-upload-reference').disabled = value; }
     function setStatus(text, ok = null) { const el = $('#zaec-status'); el.textContent = text; el.className = `zaec-status-panel ${state.busy && ok === null ? 'zaec-working' : ''} ${ok === true ? 'zaec-ok' : ok === false ? 'zaec-error' : ''}`.trim(); }
