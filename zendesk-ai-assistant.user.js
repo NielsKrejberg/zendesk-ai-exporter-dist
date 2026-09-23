@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version     0.10.8
+// @version     0.10.9
 // @description  Zendesk AI support assistant with built-in ticket search, export, Supabase KB upload, and versioned reference knowledge.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -120,7 +120,17 @@
     document.body.appendChild(panel);
 
     const $ = s => panel.querySelector(s);
-    toggle.onclick = () => panel.style.display = panel.style.display === 'flex' ? 'none' : 'flex';
+    toggle.onclick = () => {
+        if (panel.style.display === 'flex') {
+            panel.style.display = 'none';
+            return;
+        }
+        if (!getToken()) {
+            signInWithPassword(() => { panel.style.display = 'flex'; });
+            return;
+        }
+        panel.style.display = 'flex';
+    };
     $('#zaec-close').onclick = () => panel.style.display = 'none';
     $('#zaec-settings').onclick = signInWithPassword;
     $('#zaec-account').onclick = toggleAccountMenu;
@@ -156,7 +166,6 @@
     updateAccountUi();
     refreshContext();
     setInterval(refreshContext, 800);
-    if (!getToken()) signInWithPassword();
 
     function switchView(view) {
         state.view = view;
@@ -263,11 +272,15 @@
     }
 
     function closeLoginModal() {
-        document.getElementById('zaec-login-overlay')?.classList.remove('open');
+        const overlay = document.getElementById('zaec-login-overlay');
+        if (!overlay) return;
+        overlay.classList.remove('open');
+        overlay._zaecOnLoginSuccess = null;
     }
 
-    function signInWithPassword() {
+    function signInWithPassword(onSuccess = null) {
         const overlay = ensureLoginModal();
+        overlay._zaecOnLoginSuccess = typeof onSuccess === 'function' ? onSuccess : null;
         const token = getToken();
         const email = token ? decodeTokenPayload(token)?.email : '';
         const emailInput = overlay.querySelector('#zaec-login-email');
@@ -308,9 +321,11 @@
                 if (response.status >= 200 && response.status < 300 && data.access_token) {
                     GM_setValue(TOKEN_KEY, data.access_token);
                     passwordInput.value = '';
+                    const onSuccess = overlay._zaecOnLoginSuccess;
                     closeLoginModal();
                     updateAccountUi();
                     setStatus('Signed in securely', true);
+                    if (typeof onSuccess === 'function') onSuccess();
                 } else {
                     passwordInput.value = '';
                     error.textContent = data.error || 'Could not sign in. Check your details and try again.';
