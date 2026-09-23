@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version     0.10.7
+// @version     0.10.8
 // @description  Zendesk AI support assistant with built-in ticket search, export, Supabase KB upload, and versioned reference knowledge.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -156,6 +156,7 @@
     updateAccountUi();
     refreshContext();
     setInterval(refreshContext, 800);
+    if (!getToken()) signInWithPassword();
 
     function switchView(view) {
         state.view = view;
@@ -460,6 +461,10 @@
 
     async function sendMessage(messageOverride = '', includeReferenceKnowledge = false) {
         if (state.busy) return;
+        if (!getToken()) {
+            signInWithPassword();
+            return;
+        }
         const input = $('#zaec-input');
         const text = String(messageOverride || input.value).trim();
         if (!text) return;
