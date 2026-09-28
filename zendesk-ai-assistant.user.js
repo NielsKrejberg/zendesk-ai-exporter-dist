@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version     0.10.10
+// @version     0.10.11
 // @description  Zendesk AI support assistant with built-in ticket search, export, Supabase KB upload, and versioned reference knowledge.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -25,6 +25,7 @@
     const FEEDBACK_ENDPOINT = `${SUPABASE_BASE}/chat-feedback`;
     const IMPORT_ENDPOINT = `${SUPABASE_BASE}/import-zendesk`;
     const REFERENCE_IMPORT_ENDPOINT = `${SUPABASE_BASE}/import-reference-knowledge`;
+    const EVALUATION_ENDPOINT = `${SUPABASE_BASE}/evaluate-baseline`;
     const PASSWORD_LOGIN_ENDPOINT = `${SUPABASE_BASE}/password-login`;
     const TOKEN_KEY = 'zae_supabase_access_token';
 
@@ -54,6 +55,7 @@
         exportCancelled: false,
         feedbackHandled: false,
         groupCache: new Map(),
+        lastEvaluation: null,
     };
 
     const style = document.createElement('style');
@@ -77,7 +79,7 @@
       .zaec-reuse-box{margin-top:9px;padding:9px 10px;border:1px solid rgba(155,229,178,.34);border-radius:8px;background:rgba(117,190,139,.11);white-space:normal}.zaec-reuse-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px}.zaec-reuse-title{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:#dff6e6}.zaec-reuse-title a{color:#dff6e6;text-decoration:none}.zaec-reuse-solution{padding:8px;border:1px solid rgba(255,255,255,.10);border-radius:6px;background:rgba(0,0,0,.15);white-space:pre-wrap;overflow-wrap:anywhere;color:rgba(255,255,255,.92)}.zaec-copy-solution{flex:0 0 auto;padding:5px 8px!important;font-size:11px}
       .zaec-empty{padding:20px 12px;color:rgba(255,255,255,.58);text-align:center}.zaec-compose{padding:10px;border-top:1px solid rgba(148,210,168,.18)}.zaec-quick-actions,.zaec-feedback-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.zaec-quick-actions button,.zaec-feedback-actions button{padding:6px 8px!important;font-size:11px}.zaec-feedback{margin:8px 0 0;padding:8px;border-top:1px solid rgba(255,255,255,.10);color:rgba(255,255,255,.72);font-size:11px}.zaec-feedback-label{margin-bottom:6px;font-weight:700;color:#dff6e6}#${APP_ID} textarea{resize:vertical}.zaec-input-row{margin-top:7px;justify-content:flex-end}
       .zaec-export-body{padding:10px 12px 12px;overflow:auto;display:flex;flex-direction:column;min-height:0;height:100%}.zaec-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 10px}.zaec-section{margin-top:9px;flex:0 0 auto}.zaec-actions{flex-wrap:wrap;margin-top:9px}
-      .zaec-reference-box{padding:9px 10px;border:1px solid rgba(148,210,168,.18);border-radius:8px;background:rgba(0,0,0,.11)}.zaec-reference-row{margin-top:7px;flex-wrap:wrap}.zaec-reference-row input[type=file]{flex:1;min-width:260px}
+      .zaec-reference-box,.zaec-evaluation-box{padding:9px 10px;border:1px solid rgba(148,210,168,.18);border-radius:8px;background:rgba(0,0,0,.11)}.zaec-reference-row,.zaec-evaluation-actions{margin-top:7px;flex-wrap:wrap}.zaec-reference-row input[type=file]{flex:1;min-width:260px}.zaec-evaluation-actions{display:flex;gap:7px;align-items:center}.zaec-evaluation-result{display:none;margin-top:8px;padding:8px;border:1px solid rgba(155,229,178,.18);border-radius:7px;background:rgba(117,190,139,.08);white-space:pre-wrap;overflow-wrap:anywhere;color:#dff6e6;font-size:11px;line-height:1.5}
       #${APP_ID} label{display:grid;gap:4px;color:rgba(255,255,255,.84);min-width:0}#${APP_ID} input,#${APP_ID} select,#${APP_ID} textarea{width:100%;min-width:0;border:1px solid rgba(255,255,255,.12);border-radius:6px;background:rgba(0,0,0,.18);color:#fff;padding:7px 8px;outline:none}#${APP_ID} input,#${APP_ID} select{min-height:34px}.zaec-compose textarea{min-height:76px;max-height:180px}.zaec-export-body textarea{min-height:48px;max-height:110px}
       .zaec-table-wrap{margin-top:9px;flex:1 0 220px;min-height:220px;overflow:auto;border:1px solid rgba(148,210,168,.16);border-radius:7px}.zaec-table-wrap table{width:100%;border-collapse:collapse;min-width:980px}.zaec-table-wrap th{position:sticky;top:0;z-index:1;background:rgba(20,63,42,.98);text-align:left}.zaec-table-wrap th,.zaec-table-wrap td{padding:7px 8px;border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top}.zaec-link{color:#d9f5e2;text-decoration:none;font-weight:600}.zaec-pill{display:inline-block;padding:2px 6px;border-radius:999px;background:rgba(125,200,148,.15);border:1px solid rgba(145,219,168,.18)}
       .zaec-account{display:flex;align-items:center;gap:7px;padding:3px 5px!important;border-radius:999px!important;background:rgba(117,190,139,.14)!important;border-color:rgba(155,229,178,.28)!important}.zaec-account:hover{background:rgba(117,190,139,.22)!important}.zaec-account-initials{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:#b6e6c3;color:#123421;font-size:10px;font-weight:800;letter-spacing:.03em}.zaec-account-label{font-size:11px;color:rgba(255,255,255,.82)}
@@ -108,6 +110,12 @@
             <strong>Reference knowledge</strong>
             <div class="zaec-help">Upload versioned non-Zendesk reference snapshots. A newer snapshot with the same source key supersedes the older one for retrieval.</div>
             <div class="zaec-reference-row"><input type="file" id="zaec-reference-file" accept=".json,application/json"><button id="zaec-upload-reference" class="zaec-primary">Upload reference snapshot</button></div>
+          </div>
+          <div class="zaec-section zaec-evaluation-box">
+            <strong>Baseline evaluation</strong>
+            <div class="zaec-help">Run the read-only Phase 1 classifier and approved-solution retrieval benchmark against manually labelled tickets. No classifications are changed.</div>
+            <div class="zaec-evaluation-actions"><button id="zaec-run-evaluation" class="zaec-primary">Run baseline evaluation</button><button id="zaec-copy-evaluation" disabled>Copy result</button><button id="zaec-download-evaluation" disabled>Download JSON</button></div>
+            <div id="zaec-evaluation-result" class="zaec-evaluation-result"></div>
           </div>
           <div class="zaec-section"><label>Search terms / Zendesk query<textarea id="zaec-query" placeholder='Optional. Use | between alternatives, e.g. checkout error | payment failed | basket issue'></textarea></label><div class="zaec-help">Use | for multiple alternatives. Results are combined and duplicate tickets removed.</div></div>
           <div class="zaec-section zaec-grid"><label>From date<input type="date" id="zaec-from-date"></label><label>To date<input type="date" id="zaec-to-date"></label><label>Date field<select id="zaec-date-field"><option value="solved">Solved date</option><option value="created" selected>Created date</option><option value="updated">Updated date</option></select></label><label>Group<input id="zaec-group" value="Web - Helpdesk" placeholder="Leave empty for any group"></label></div>
@@ -152,6 +160,9 @@
         }
     });
     $('#zaec-upload-reference').onclick = uploadReferencePackage;
+    $('#zaec-run-evaluation').onclick = runBaselineEvaluation;
+    $('#zaec-copy-evaluation').onclick = copyBaselineEvaluation;
+    $('#zaec-download-evaluation').onclick = downloadBaselineEvaluation;
     $('#zaec-find').onclick = findTickets;
     $('#zaec-load-comments').onclick = loadSelectedConversations;
     $('#zaec-cancel').onclick = () => { state.exportCancelled = true; setExportStatus('Cancellation requested…'); };
@@ -431,6 +442,72 @@
                 onerror: error => reject(new Error(`Supabase network request failed${error?.error ? `: ${error.error}` : ''}.`)),
             });
         });
+    }
+
+    async function runBaselineEvaluation() {
+        if (state.busy || state.exportRunning) return;
+        state.busy = true;
+        state.lastEvaluation = null;
+        const runButton = $('#zaec-run-evaluation');
+        const copyButton = $('#zaec-copy-evaluation');
+        const downloadButton = $('#zaec-download-evaluation');
+        const resultBox = $('#zaec-evaluation-result');
+        runButton.disabled = true;
+        copyButton.disabled = true;
+        downloadButton.disabled = true;
+        resultBox.style.display = 'block';
+        resultBox.textContent = 'Running evaluation against manually labelled tickets…';
+        try {
+            setExportStatus('Running Phase 1 baseline evaluation…');
+            const result = await callSupabase(EVALUATION_ENDPOINT, { limit: 200 }, 300000);
+            state.lastEvaluation = result;
+            const classification = result.classification || {};
+            const retrieval = result.retrieval || {};
+            const subjectLines = Array.isArray(classification.by_subject)
+                ? classification.by_subject.map(row => `  ${row.subject}: ${row.agreement_rate}% (${row.agreed}/${row.total})`)
+                : [];
+            const confusionLines = Array.isArray(classification.confusions)
+                ? classification.confusions.slice(0, 8).map(row => `  Issue ${row.expected_issue_id} → ${row.predicted_issue_id ?? 'no match'}: ${row.count}`)
+                : [];
+            resultBox.textContent = [
+                `Tickets evaluated: ${result.evaluated_tickets ?? classification.total ?? 0}`,
+                `Classification agreement: ${classification.agreement_rate ?? 0}% (${classification.agreed ?? 0}/${classification.total ?? 0})`,
+                `Approved catalogue top-4 hit rate: ${retrieval.top4_hit_rate ?? 0}% (${retrieval.hits ?? 0}/${retrieval.eligible ?? 0})`,
+                `Excluded from retrieval benchmark: ${retrieval.excluded_expected_not_approved ?? 0}`,
+                '',
+                'Agreement by subject:',
+                ...(subjectLines.length ? subjectLines : ['  No subject results returned.']),
+                '',
+                'Most common confusions:',
+                ...(confusionLines.length ? confusionLines : ['  No confusions returned.']),
+            ].join('\n');
+            copyButton.disabled = false;
+            downloadButton.disabled = false;
+            setExportStatus(`Baseline complete: classification ${classification.agreement_rate ?? 0}% · retrieval top-4 ${retrieval.top4_hit_rate ?? 0}%`, true);
+        } catch (e) {
+            resultBox.textContent = `Evaluation failed: ${e.message || String(e)}`;
+            setExportStatus(e.message || String(e), false);
+        } finally {
+            state.busy = false;
+            runButton.disabled = state.exportRunning;
+        }
+    }
+
+    async function copyBaselineEvaluation() {
+        if (!state.lastEvaluation) return;
+        const text = JSON.stringify(state.lastEvaluation, null, 2);
+        try {
+            await navigator.clipboard.writeText(text);
+            setExportStatus('Baseline evaluation JSON copied to clipboard.', true);
+        } catch {
+            setExportStatus('Could not copy automatically. Use Download JSON instead.', false);
+        }
+    }
+
+    function downloadBaselineEvaluation() {
+        if (!state.lastEvaluation) return;
+        downloadBlob(JSON.stringify(state.lastEvaluation, null, 2), `zendesk-ai-baseline-${dateStamp()}.json`, 'application/json;charset=utf-8');
+        setExportStatus('Baseline evaluation JSON downloaded.', true);
     }
 
     async function uploadReferencePackage() {
@@ -801,7 +878,7 @@
     function selectNone(){state.selectedTicketIds.clear();panel.querySelectorAll('.zaec-row-check').forEach(c=>c.checked=false);updateSelectionUi()}
     function getSelectedTickets(){return state.tickets.filter(t=>state.selectedTicketIds.has(t.id))}
     function updateSelectionUi(){const has=state.tickets.length>0,sel=state.selectedTicketIds.size;$('#zaec-load-comments').disabled=!sel||state.exportRunning;$('#zaec-upload-cloud').disabled=!sel||state.exportRunning;$('#zaec-export-jsonl').disabled=!sel||state.exportRunning;$('#zaec-export-csv').disabled=!sel||state.exportRunning;$('#zaec-select-all').disabled=!has||state.exportRunning;$('#zaec-select-none').disabled=!has||state.exportRunning;$('#zaec-check-all').disabled=!has||state.exportRunning;$('#zaec-check-all').checked=has&&sel===state.tickets.length;$('#zaec-upload-cloud').textContent=sel?`Upload selected (${sel}) to KB`:'Upload selected to KB'}
-    function setExportRunningUi(r){$('#zaec-find').disabled=r;$('#zaec-cancel').disabled=!r;$('#zaec-upload-reference').disabled=r||state.busy;updateSelectionUi()}
+    function setExportRunningUi(r){$('#zaec-find').disabled=r;$('#zaec-cancel').disabled=!r;$('#zaec-upload-reference').disabled=r||state.busy;$('#zaec-run-evaluation').disabled=r||state.busy;updateSelectionUi()}
 
     function exportJsonl(tickets){downloadBlob(tickets.map(t=>JSON.stringify(t)).join('\n'),`zendesk-tickets-${dateStamp()}.jsonl`,'application/x-ndjson;charset=utf-8')}
     function exportCsv(tickets){const h=['id','created_at','updated_at','solved_at','status','subject','group_id','group_name','assignee_id','priority','type','tags','conversation_loaded','conversation_count','url'],rows=[h.map(csvCell).join(',')];for(const t of tickets){const v={...t,tags:(t.tags||[]).join(' | '),conversation_count:Array.isArray(t.conversation)?t.conversation.length:''};rows.push(h.map(k=>csvCell(v[k])).join(','))}downloadBlob(rows.join('\n'),`zendesk-tickets-${dateStamp()}.csv`,'text/csv;charset=utf-8')}
