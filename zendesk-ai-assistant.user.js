@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version     0.10.11
+// @version     0.10.12
 // @description  Zendesk AI support assistant with built-in ticket search, export, Supabase KB upload, and versioned reference knowledge.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -444,6 +444,92 @@
         });
     }
 
+    function evaluationPct(numerator, denominator) {
+        return denominator ? Math.round((numerator / denominator) * 1000) / 10 : 0;
+    }
+
+    function createEvaluationAggregate() {
+        return {
+            ok: true,
+            evaluated_tickets: 0,
+            manual_label_rows: 0,
+            total_manual_tickets: 0,
+            batches: 0,
+            classification: {
+                agreement_rate: 0,
+                agreed: 0,
+                total: 0,
+                mismatch_ticket_ids: [],
+                by_subject: [],
+                confusions: [],
+            },
+            retrieval: {
+                top4_hit_rate: 0,
+                hits: 0,
+                eligible: 0,
+                excluded_expected_not_approved: 0,
+                miss_ticket_ids: [],
+            },
+            notes: [],
+        };
+    }
+
+    function mergeEvaluationBatch(aggregate, batch) {
+        aggregate.evaluated_tickets += Number(batch.evaluated_tickets || 0);
+        aggregate.manual_label_rows += Number(batch.manual_label_rows || 0);
+        aggregate.total_manual_tickets = Math.max(aggregate.total_manual_tickets, Number(batch.total_manual_tickets || 0));
+        aggregate.batches++;
+        if (!aggregate.notes.length && Array.isArray(batch.notes)) aggregate.notes = [...batch.notes];
+
+        const sourceClassification = batch.classification || {};
+        const targetClassification = aggregate.classification;
+        targetClassification.agreed += Number(sourceClassification.agreed || 0);
+        targetClassification.total += Number(sourceClassification.total || 0);
+        targetClassification.mismatch_ticket_ids.push(...(sourceClassification.mismatch_ticket_ids || []).map(Number).filter(Number.isFinite));
+
+        const subjects = new Map(targetClassification.by_subject.map(row => [row.subject, { ...row }]));
+        for (const row of sourceClassification.by_subject || []) {
+            const current = subjects.get(row.subject) || { subject: row.subject, total: 0, agreed: 0, agreement_rate: 0 };
+            current.total += Number(row.total || 0);
+            current.agreed += Number(row.agreed || 0);
+            current.agreement_rate = evaluationPct(current.agreed, current.total);
+            subjects.set(row.subject, current);
+        }
+        targetClassification.by_subject = Array.from(subjects.values())
+            .sort((a, b) => b.total - a.total || String(a.subject).localeCompare(String(b.subject)));
+
+        const confusions = new Map(targetClassification.confusions.map(row => [
+            `${row.expected_issue_id}->${row.predicted_issue_id ?? 'none'}`,
+            { ...row, ticket_ids: [...(row.ticket_ids || [])] },
+        ]));
+        for (const row of sourceClassification.confusions || []) {
+            const key = `${row.expected_issue_id}->${row.predicted_issue_id ?? 'none'}`;
+            const current = confusions.get(key) || {
+                expected_issue_id: row.expected_issue_id,
+                predicted_issue_id: row.predicted_issue_id ?? null,
+                count: 0,
+                ticket_ids: [],
+            };
+            current.count += Number(row.count || 0);
+            current.ticket_ids = Array.from(new Set([...current.ticket_ids, ...(row.ticket_ids || []).map(Number).filter(Number.isFinite)]));
+            confusions.set(key, current);
+        }
+        targetClassification.confusions = Array.from(confusions.values())
+            .sort((a, b) => b.count - a.count || Number(a.expected_issue_id) - Number(b.expected_issue_id))
+            .slice(0, 15);
+        targetClassification.mismatch_ticket_ids = Array.from(new Set(targetClassification.mismatch_ticket_ids));
+        targetClassification.agreement_rate = evaluationPct(targetClassification.agreed, targetClassification.total);
+
+        const sourceRetrieval = batch.retrieval || {};
+        const targetRetrieval = aggregate.retrieval;
+        targetRetrieval.hits += Number(sourceRetrieval.hits || 0);
+        targetRetrieval.eligible += Number(sourceRetrieval.eligible || 0);
+        targetRetrieval.excluded_expected_not_approved += Number(sourceRetrieval.excluded_expected_not_approved || 0);
+        targetRetrieval.miss_ticket_ids.push(...(sourceRetrieval.miss_ticket_ids || []).map(Number).filter(Number.isFinite));
+        targetRetrieval.miss_ticket_ids = Array.from(new Set(targetRetrieval.miss_ticket_ids));
+        targetRetrieval.top4_hit_rate = evaluationPct(targetRetrieval.hits, targetRetrieval.eligible);
+    }
+
     async function runBaselineEvaluation() {
         if (state.busy || state.exportRunning) return;
         state.busy = true;
@@ -456,24 +542,54 @@
         copyButton.disabled = true;
         downloadButton.disabled = true;
         resultBox.style.display = 'block';
-        resultBox.textContent = 'Running evaluation against manually labelled tickets…';
+        resultBox.textContent = 'Starting batched evaluation…';
+
         try {
-            setExportStatus('Running Phase 1 baseline evaluation…');
-            const result = await callSupabase(EVALUATION_ENDPOINT, { limit: 200 }, 300000);
-            state.lastEvaluation = result;
-            const classification = result.classification || {};
-            const retrieval = result.retrieval || {};
-            const subjectLines = Array.isArray(classification.by_subject)
-                ? classification.by_subject.map(row => `  ${row.subject}: ${row.agreement_rate}% (${row.agreed}/${row.total})`)
-                : [];
-            const confusionLines = Array.isArray(classification.confusions)
-                ? classification.confusions.slice(0, 8).map(row => `  Issue ${row.expected_issue_id} → ${row.predicted_issue_id ?? 'no match'}: ${row.count}`)
-                : [];
+            const aggregate = createEvaluationAggregate();
+            let offset = 0;
+            let batchNumber = 0;
+
+            while (true) {
+                batchNumber++;
+                const knownTotal = aggregate.total_manual_tickets;
+                const progressLabel = knownTotal
+                    ? `Running batch ${batchNumber} · ${Math.min(offset + 4, knownTotal)}/${knownTotal} tickets…`
+                    : `Running batch ${batchNumber}…`;
+                resultBox.textContent = progressLabel;
+                setExportStatus(progressLabel);
+
+                const batch = await callSupabase(EVALUATION_ENDPOINT, {
+                    limit: 200,
+                    offset,
+                    batch_size: 4,
+                }, 90000);
+
+                mergeEvaluationBatch(aggregate, batch);
+
+                const batchInfo = batch.batch || {};
+                const total = aggregate.total_manual_tickets || aggregate.evaluated_tickets;
+                resultBox.textContent = `Evaluated ${aggregate.evaluated_tickets}/${total} tickets…`;
+
+                if (!batchInfo.has_more) break;
+                const nextOffset = Number(batchInfo.next_offset);
+                if (!Number.isFinite(nextOffset) || nextOffset <= offset) {
+                    throw new Error('Evaluation batching stopped because the next batch offset was invalid.');
+                }
+                offset = nextOffset;
+            }
+
+            state.lastEvaluation = aggregate;
+            const classification = aggregate.classification;
+            const retrieval = aggregate.retrieval;
+            const subjectLines = classification.by_subject.map(row => `  ${row.subject}: ${row.agreement_rate}% (${row.agreed}/${row.total})`);
+            const confusionLines = classification.confusions.slice(0, 8).map(row => `  Issue ${row.expected_issue_id} → ${row.predicted_issue_id ?? 'no match'}: ${row.count}`);
+
             resultBox.textContent = [
-                `Tickets evaluated: ${result.evaluated_tickets ?? classification.total ?? 0}`,
-                `Classification agreement: ${classification.agreement_rate ?? 0}% (${classification.agreed ?? 0}/${classification.total ?? 0})`,
-                `Approved catalogue top-4 hit rate: ${retrieval.top4_hit_rate ?? 0}% (${retrieval.hits ?? 0}/${retrieval.eligible ?? 0})`,
-                `Excluded from retrieval benchmark: ${retrieval.excluded_expected_not_approved ?? 0}`,
+                `Tickets evaluated: ${aggregate.evaluated_tickets}`,
+                `Batches: ${aggregate.batches}`,
+                `Classification agreement: ${classification.agreement_rate}% (${classification.agreed}/${classification.total})`,
+                `Approved catalogue top-4 hit rate: ${retrieval.top4_hit_rate}% (${retrieval.hits}/${retrieval.eligible})`,
+                `Excluded from retrieval benchmark: ${retrieval.excluded_expected_not_approved}`,
                 '',
                 'Agreement by subject:',
                 ...(subjectLines.length ? subjectLines : ['  No subject results returned.']),
@@ -481,9 +597,10 @@
                 'Most common confusions:',
                 ...(confusionLines.length ? confusionLines : ['  No confusions returned.']),
             ].join('\n');
+
             copyButton.disabled = false;
             downloadButton.disabled = false;
-            setExportStatus(`Baseline complete: classification ${classification.agreement_rate ?? 0}% · retrieval top-4 ${retrieval.top4_hit_rate ?? 0}%`, true);
+            setExportStatus(`Baseline complete: classification ${classification.agreement_rate}% · retrieval top-4 ${retrieval.top4_hit_rate}%`, true);
         } catch (e) {
             resultBox.textContent = `Evaluation failed: ${e.message || String(e)}`;
             setExportStatus(e.message || String(e), false);
