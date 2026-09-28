@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version     0.10.12
+// @version     0.10.13
 // @description  Zendesk AI support assistant with built-in ticket search, export, Supabase KB upload, and versioned reference knowledge.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -113,8 +113,8 @@
           </div>
           <div class="zaec-section zaec-evaluation-box">
             <strong>Baseline evaluation</strong>
-            <div class="zaec-help">Run the read-only Phase 1 classifier and approved-solution retrieval benchmark against manually labelled tickets. No classifications are changed.</div>
-            <div class="zaec-evaluation-actions"><button id="zaec-run-evaluation" class="zaec-primary">Run baseline evaluation</button><button id="zaec-copy-evaluation" disabled>Copy result</button><button id="zaec-download-evaluation" disabled>Download JSON</button></div>
+            <div class="zaec-help">Run the read-only benchmark against manually labelled tickets. The 3x benchmark reports min/mean/max. Status diagnostics rerun the same benchmark with pending issues excluded and with approved issues preferred. No classifications are changed.</div>
+            <div class="zaec-evaluation-actions"><button id="zaec-run-evaluation" class="zaec-primary">Run 3x benchmark</button><button id="zaec-run-diagnostics">Run status diagnostics</button><button id="zaec-copy-evaluation" disabled>Copy result</button><button id="zaec-download-evaluation" disabled>Download JSON</button></div>
             <div id="zaec-evaluation-result" class="zaec-evaluation-result"></div>
           </div>
           <div class="zaec-section"><label>Search terms / Zendesk query<textarea id="zaec-query" placeholder='Optional. Use | between alternatives, e.g. checkout error | payment failed | basket issue'></textarea></label><div class="zaec-help">Use | for multiple alternatives. Results are combined and duplicate tickets removed.</div></div>
@@ -161,6 +161,7 @@
     });
     $('#zaec-upload-reference').onclick = uploadReferencePackage;
     $('#zaec-run-evaluation').onclick = runBaselineEvaluation;
+    $('#zaec-run-diagnostics').onclick = runEvaluationDiagnostics;
     $('#zaec-copy-evaluation').onclick = copyBaselineEvaluation;
     $('#zaec-download-evaluation').onclick = downloadBaselineEvaluation;
     $('#zaec-find').onclick = findTickets;
@@ -448,9 +449,22 @@
         return denominator ? Math.round((numerator / denominator) * 1000) / 10 : 0;
     }
 
-    function createEvaluationAggregate() {
+    function evaluationMean(values) {
+        return values.length ? Math.round((values.reduce((sum, value) => sum + Number(value || 0), 0) / values.length) * 10) / 10 : 0;
+    }
+
+    function evaluationRange(values) {
+        return {
+            min: values.length ? Math.min(...values) : 0,
+            mean: evaluationMean(values),
+            max: values.length ? Math.max(...values) : 0,
+        };
+    }
+
+    function createEvaluationAggregate(policy = 'standard') {
         return {
             ok: true,
+            selection_policy: policy,
             evaluated_tickets: 0,
             manual_label_rows: 0,
             total_manual_tickets: 0,
@@ -469,6 +483,9 @@
                 eligible: 0,
                 excluded_expected_not_approved: 0,
                 miss_ticket_ids: [],
+                by_language: [],
+                language_mismatch_misses: 0,
+                catalogue_language: 'en',
             },
             notes: [],
         };
@@ -528,6 +545,100 @@
         targetRetrieval.miss_ticket_ids.push(...(sourceRetrieval.miss_ticket_ids || []).map(Number).filter(Number.isFinite));
         targetRetrieval.miss_ticket_ids = Array.from(new Set(targetRetrieval.miss_ticket_ids));
         targetRetrieval.top4_hit_rate = evaluationPct(targetRetrieval.hits, targetRetrieval.eligible);
+        targetRetrieval.catalogue_language = sourceRetrieval.catalogue_language || targetRetrieval.catalogue_language;
+
+        const languages = new Map(targetRetrieval.by_language.map(row => [row.language, { ...row }]));
+        for (const row of sourceRetrieval.by_language || []) {
+            const current = languages.get(row.language) || { language: row.language, eligible: 0, hits: 0, misses: 0, hit_rate: 0, catalogue_language: row.catalogue_language || 'en' };
+            current.eligible += Number(row.eligible || 0);
+            current.hits += Number(row.hits || 0);
+            current.misses += Number(row.misses || 0);
+            current.hit_rate = evaluationPct(current.hits, current.eligible);
+            languages.set(row.language, current);
+        }
+        targetRetrieval.by_language = Array.from(languages.values())
+            .sort((a, b) => b.eligible - a.eligible || String(a.language).localeCompare(String(b.language)));
+        targetRetrieval.language_mismatch_misses = targetRetrieval.by_language
+            .filter(row => !['en','unknown'].includes(String(row.language)))
+            .reduce((sum, row) => sum + Number(row.misses || 0), 0);
+    }
+
+    async function runEvaluationOnce(policy, runIndex, runTotal, label) {
+        const resultBox = $('#zaec-evaluation-result');
+        const aggregate = createEvaluationAggregate(policy);
+        let offset = 0;
+        let batchNumber = 0;
+        let preparationRetries = 0;
+
+        while (true) {
+            batchNumber++;
+            const knownTotal = aggregate.total_manual_tickets;
+            const progressLabel = knownTotal
+                ? `${label} run ${runIndex}/${runTotal} · ${Math.min(offset + 4, knownTotal)}/${knownTotal} tickets…`
+                : `${label} run ${runIndex}/${runTotal} · batch ${batchNumber}…`;
+            resultBox.textContent = progressLabel;
+            setExportStatus(progressLabel);
+
+            const batch = await callSupabase(EVALUATION_ENDPOINT, {
+                limit: 200,
+                offset,
+                batch_size: 4,
+                selection_policy: policy,
+            }, 90000);
+
+            if (batch.preparing) {
+                preparationRetries++;
+                if (preparationRetries > 80) throw new Error('Ticket analysis preparation did not finish in time.');
+                const pending = Number(batch.analysis_pending_ticket_count || 0);
+                const waitMs = Math.max(1000, Math.min(Number(batch.retry_after_ms) || 3000, 10000));
+                resultBox.textContent = `${label} run ${runIndex}/${runTotal} · preparing structured analysis for ${pending} ticket${pending===1?'':'s'}…`;
+                setExportStatus('Preparing structured ticket analysis in the background…');
+                await new Promise(resolve => setTimeout(resolve, waitMs));
+                continue;
+            }
+
+            preparationRetries = 0;
+            mergeEvaluationBatch(aggregate, batch);
+            const batchInfo = batch.batch || {};
+            if (!batchInfo.has_more) break;
+
+            const nextOffset = Number(batchInfo.next_offset);
+            if (!Number.isFinite(nextOffset) || nextOffset <= offset) {
+                throw new Error('Evaluation batching stopped because the next batch offset was invalid.');
+            }
+            offset = nextOffset;
+        }
+
+        return aggregate;
+    }
+
+    async function runEvaluationSet(policy, runCount = 3, label = 'Benchmark') {
+        const runs = [];
+        for (let run = 1; run <= runCount; run++) runs.push(await runEvaluationOnce(policy, run, runCount, label));
+        const classificationRates = runs.map(row => Number(row.classification?.agreement_rate || 0));
+        const retrievalRates = runs.map(row => Number(row.retrieval?.top4_hit_rate || 0));
+        const errorCounts = runs.map(row => Number(row.classification?.total || 0) - Number(row.classification?.agreed || 0));
+        return {
+            policy,
+            run_count: runs.length,
+            runs,
+            summary: {
+                classification_agreement: evaluationRange(classificationRates),
+                retrieval_top4_hit_rate: evaluationRange(retrievalRates),
+                classification_errors: evaluationRange(errorCounts),
+            },
+            retrieval_language: runs[0]?.retrieval?.by_language || [],
+        };
+    }
+
+    function benchmarkSummaryLines(report, title = 'Benchmark') {
+        const classification = report.summary.classification_agreement;
+        const retrieval = report.summary.retrieval_top4_hit_rate;
+        return [
+            title,
+            `  Classification agreement: ${classification.min}% / ${classification.mean}% / ${classification.max}% (min / mean / max)`,
+            `  Retrieval top-4: ${retrieval.min}% / ${retrieval.mean}% / ${retrieval.max}%`,
+        ];
     }
 
     async function runBaselineEvaluation() {
@@ -535,78 +646,110 @@
         state.busy = true;
         state.lastEvaluation = null;
         const runButton = $('#zaec-run-evaluation');
+        const diagnosticButton = $('#zaec-run-diagnostics');
         const copyButton = $('#zaec-copy-evaluation');
         const downloadButton = $('#zaec-download-evaluation');
         const resultBox = $('#zaec-evaluation-result');
         runButton.disabled = true;
+        diagnosticButton.disabled = true;
         copyButton.disabled = true;
         downloadButton.disabled = true;
         resultBox.style.display = 'block';
-        resultBox.textContent = 'Starting batched evaluation…';
 
         try {
-            const aggregate = createEvaluationAggregate();
-            let offset = 0;
-            let batchNumber = 0;
-
-            while (true) {
-                batchNumber++;
-                const knownTotal = aggregate.total_manual_tickets;
-                const progressLabel = knownTotal
-                    ? `Running batch ${batchNumber} · ${Math.min(offset + 4, knownTotal)}/${knownTotal} tickets…`
-                    : `Running batch ${batchNumber}…`;
-                resultBox.textContent = progressLabel;
-                setExportStatus(progressLabel);
-
-                const batch = await callSupabase(EVALUATION_ENDPOINT, {
-                    limit: 200,
-                    offset,
-                    batch_size: 4,
-                }, 90000);
-
-                mergeEvaluationBatch(aggregate, batch);
-
-                const batchInfo = batch.batch || {};
-                const total = aggregate.total_manual_tickets || aggregate.evaluated_tickets;
-                resultBox.textContent = `Evaluated ${aggregate.evaluated_tickets}/${total} tickets…`;
-
-                if (!batchInfo.has_more) break;
-                const nextOffset = Number(batchInfo.next_offset);
-                if (!Number.isFinite(nextOffset) || nextOffset <= offset) {
-                    throw new Error('Evaluation batching stopped because the next batch offset was invalid.');
-                }
-                offset = nextOffset;
-            }
-
-            state.lastEvaluation = aggregate;
-            const classification = aggregate.classification;
-            const retrieval = aggregate.retrieval;
-            const subjectLines = classification.by_subject.map(row => `  ${row.subject}: ${row.agreement_rate}% (${row.agreed}/${row.total})`);
-            const confusionLines = classification.confusions.slice(0, 8).map(row => `  Issue ${row.expected_issue_id} → ${row.predicted_issue_id ?? 'no match'}: ${row.count}`);
-
+            const benchmark = await runEvaluationSet('standard', 3, 'Standard benchmark');
+            const languageLines = (benchmark.retrieval_language || []).map(row =>
+                `  ${row.language}: ${row.hits}/${row.eligible} hits · ${row.misses} misses`
+            );
+            state.lastEvaluation = {
+                ok: true,
+                type: 'three_run_benchmark',
+                benchmark,
+            };
             resultBox.textContent = [
-                `Tickets evaluated: ${aggregate.evaluated_tickets}`,
-                `Batches: ${aggregate.batches}`,
-                `Classification agreement: ${classification.agreement_rate}% (${classification.agreed}/${classification.total})`,
-                `Approved catalogue top-4 hit rate: ${retrieval.top4_hit_rate}% (${retrieval.hits}/${retrieval.eligible})`,
-                `Excluded from retrieval benchmark: ${retrieval.excluded_expected_not_approved}`,
+                ...benchmarkSummaryLines(benchmark, '3-run standard benchmark'),
                 '',
-                'Agreement by subject:',
-                ...(subjectLines.length ? subjectLines : ['  No subject results returned.']),
-                '',
-                'Most common confusions:',
-                ...(confusionLines.length ? confusionLines : ['  No confusions returned.']),
+                'Retrieval by ticket language (catalogue: English):',
+                ...(languageLines.length ? languageLines : ['  No language data returned.']),
             ].join('\n');
-
             copyButton.disabled = false;
             downloadButton.disabled = false;
-            setExportStatus(`Baseline complete: classification ${classification.agreement_rate}% · retrieval top-4 ${retrieval.top4_hit_rate}%`, true);
+            setExportStatus(`3-run benchmark complete: classifier mean ${benchmark.summary.classification_agreement.mean}% · retrieval mean ${benchmark.summary.retrieval_top4_hit_rate.mean}%`, true);
         } catch (e) {
             resultBox.textContent = `Evaluation failed: ${e.message || String(e)}`;
             setExportStatus(e.message || String(e), false);
         } finally {
             state.busy = false;
             runButton.disabled = state.exportRunning;
+            diagnosticButton.disabled = state.exportRunning;
+        }
+    }
+
+    async function runEvaluationDiagnostics() {
+        if (state.busy || state.exportRunning) return;
+        state.busy = true;
+        state.lastEvaluation = null;
+        const runButton = $('#zaec-run-evaluation');
+        const diagnosticButton = $('#zaec-run-diagnostics');
+        const copyButton = $('#zaec-copy-evaluation');
+        const downloadButton = $('#zaec-download-evaluation');
+        const resultBox = $('#zaec-evaluation-result');
+        runButton.disabled = true;
+        diagnosticButton.disabled = true;
+        copyButton.disabled = true;
+        downloadButton.disabled = true;
+        resultBox.style.display = 'block';
+
+        try {
+            const standard = await runEvaluationSet('standard', 3, 'Standard');
+            const excludePending = await runEvaluationSet('exclude_pending', 3, 'Exclude pending');
+            const preferApproved = await runEvaluationSet('prefer_approved', 3, 'Prefer approved');
+
+            const standardErrors = Number(standard.summary.classification_errors.mean || 0);
+            const reduction = (report) => {
+                const errors = Number(report.summary.classification_errors.mean || 0);
+                const reduced = Math.round((standardErrors - errors) * 10) / 10;
+                return {
+                    mean_errors: errors,
+                    errors_reduced_vs_standard: reduced,
+                    share_of_standard_errors: standardErrors > 0 ? Math.round((reduced / standardErrors) * 1000) / 10 : 0,
+                };
+            };
+
+            const diagnostics = {
+                exclude_pending: reduction(excludePending),
+                prefer_approved: reduction(preferApproved),
+            };
+
+            state.lastEvaluation = {
+                ok: true,
+                type: 'status_diagnostics',
+                standard,
+                exclude_pending: excludePending,
+                prefer_approved: preferApproved,
+                diagnostics,
+            };
+
+            resultBox.textContent = [
+                ...benchmarkSummaryLines(standard, 'Standard'),
+                '',
+                ...benchmarkSummaryLines(excludePending, 'Pending excluded'),
+                `  Error reduction vs standard: ${diagnostics.exclude_pending.errors_reduced_vs_standard} tickets (${diagnostics.exclude_pending.share_of_standard_errors}% of standard errors)`,
+                '',
+                ...benchmarkSummaryLines(preferApproved, 'Approved preferred'),
+                `  Error reduction vs standard: ${diagnostics.prefer_approved.errors_reduced_vs_standard} tickets (${diagnostics.prefer_approved.share_of_standard_errors}% of standard errors)`,
+            ].join('\n');
+
+            copyButton.disabled = false;
+            downloadButton.disabled = false;
+            setExportStatus('Status diagnostics complete.', true);
+        } catch (e) {
+            resultBox.textContent = `Diagnostics failed: ${e.message || String(e)}`;
+            setExportStatus(e.message || String(e), false);
+        } finally {
+            state.busy = false;
+            runButton.disabled = state.exportRunning;
+            diagnosticButton.disabled = state.exportRunning;
         }
     }
 
@@ -995,7 +1138,7 @@
     function selectNone(){state.selectedTicketIds.clear();panel.querySelectorAll('.zaec-row-check').forEach(c=>c.checked=false);updateSelectionUi()}
     function getSelectedTickets(){return state.tickets.filter(t=>state.selectedTicketIds.has(t.id))}
     function updateSelectionUi(){const has=state.tickets.length>0,sel=state.selectedTicketIds.size;$('#zaec-load-comments').disabled=!sel||state.exportRunning;$('#zaec-upload-cloud').disabled=!sel||state.exportRunning;$('#zaec-export-jsonl').disabled=!sel||state.exportRunning;$('#zaec-export-csv').disabled=!sel||state.exportRunning;$('#zaec-select-all').disabled=!has||state.exportRunning;$('#zaec-select-none').disabled=!has||state.exportRunning;$('#zaec-check-all').disabled=!has||state.exportRunning;$('#zaec-check-all').checked=has&&sel===state.tickets.length;$('#zaec-upload-cloud').textContent=sel?`Upload selected (${sel}) to KB`:'Upload selected to KB'}
-    function setExportRunningUi(r){$('#zaec-find').disabled=r;$('#zaec-cancel').disabled=!r;$('#zaec-upload-reference').disabled=r||state.busy;$('#zaec-run-evaluation').disabled=r||state.busy;updateSelectionUi()}
+    function setExportRunningUi(r){$('#zaec-find').disabled=r;$('#zaec-cancel').disabled=!r;$('#zaec-upload-reference').disabled=r||state.busy;$('#zaec-run-evaluation').disabled=r||state.busy;$('#zaec-run-diagnostics').disabled=r||state.busy;updateSelectionUi()}
 
     function exportJsonl(tickets){downloadBlob(tickets.map(t=>JSON.stringify(t)).join('\n'),`zendesk-tickets-${dateStamp()}.jsonl`,'application/x-ndjson;charset=utf-8')}
     function exportCsv(tickets){const h=['id','created_at','updated_at','solved_at','status','subject','group_id','group_name','assignee_id','priority','type','tags','conversation_loaded','conversation_count','url'],rows=[h.map(csvCell).join(',')];for(const t of tickets){const v={...t,tags:(t.tags||[]).join(' | '),conversation_count:Array.isArray(t.conversation)?t.conversation.length:''};rows.push(h.map(k=>csvCell(v[k])).join(','))}downloadBlob(rows.join('\n'),`zendesk-tickets-${dateStamp()}.csv`,'text/csv;charset=utf-8')}
