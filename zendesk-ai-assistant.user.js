@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version     0.10.13
+// @version     0.10.14
 // @description  Zendesk AI support assistant with built-in ticket search, export, Supabase KB upload, and versioned reference knowledge.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -487,6 +487,16 @@
                 language_mismatch_misses: 0,
                 catalogue_language: 'en',
             },
+            retrieval_lexical: {
+                top4_hit_rate: 0,
+                hits: 0,
+                eligible: 0,
+                excluded_expected_not_approved: 0,
+                miss_ticket_ids: [],
+                by_language: [],
+                language_mismatch_misses: 0,
+                catalogue_language: 'en',
+            },
             notes: [],
         };
     }
@@ -537,30 +547,35 @@
         targetClassification.mismatch_ticket_ids = Array.from(new Set(targetClassification.mismatch_ticket_ids));
         targetClassification.agreement_rate = evaluationPct(targetClassification.agreed, targetClassification.total);
 
-        const sourceRetrieval = batch.retrieval || {};
-        const targetRetrieval = aggregate.retrieval;
-        targetRetrieval.hits += Number(sourceRetrieval.hits || 0);
-        targetRetrieval.eligible += Number(sourceRetrieval.eligible || 0);
-        targetRetrieval.excluded_expected_not_approved += Number(sourceRetrieval.excluded_expected_not_approved || 0);
-        targetRetrieval.miss_ticket_ids.push(...(sourceRetrieval.miss_ticket_ids || []).map(Number).filter(Number.isFinite));
-        targetRetrieval.miss_ticket_ids = Array.from(new Set(targetRetrieval.miss_ticket_ids));
-        targetRetrieval.top4_hit_rate = evaluationPct(targetRetrieval.hits, targetRetrieval.eligible);
-        targetRetrieval.catalogue_language = sourceRetrieval.catalogue_language || targetRetrieval.catalogue_language;
+        function mergeRetrievalMetrics(targetRetrieval, sourceRetrieval) {
+            sourceRetrieval = sourceRetrieval || {};
+            targetRetrieval.hits += Number(sourceRetrieval.hits || 0);
+            targetRetrieval.eligible += Number(sourceRetrieval.eligible || 0);
+            targetRetrieval.excluded_expected_not_approved += Number(sourceRetrieval.excluded_expected_not_approved || 0);
+            targetRetrieval.miss_ticket_ids.push(...(sourceRetrieval.miss_ticket_ids || []).map(Number).filter(Number.isFinite));
+            targetRetrieval.miss_ticket_ids = Array.from(new Set(targetRetrieval.miss_ticket_ids));
+            targetRetrieval.top4_hit_rate = evaluationPct(targetRetrieval.hits, targetRetrieval.eligible);
+            targetRetrieval.catalogue_language = sourceRetrieval.catalogue_language || targetRetrieval.catalogue_language;
+            targetRetrieval.mode = sourceRetrieval.mode || targetRetrieval.mode;
 
-        const languages = new Map(targetRetrieval.by_language.map(row => [row.language, { ...row }]));
-        for (const row of sourceRetrieval.by_language || []) {
-            const current = languages.get(row.language) || { language: row.language, eligible: 0, hits: 0, misses: 0, hit_rate: 0, catalogue_language: row.catalogue_language || 'en' };
-            current.eligible += Number(row.eligible || 0);
-            current.hits += Number(row.hits || 0);
-            current.misses += Number(row.misses || 0);
-            current.hit_rate = evaluationPct(current.hits, current.eligible);
-            languages.set(row.language, current);
+            const languages = new Map(targetRetrieval.by_language.map(row => [row.language, { ...row }]));
+            for (const row of sourceRetrieval.by_language || []) {
+                const current = languages.get(row.language) || { language: row.language, eligible: 0, hits: 0, misses: 0, hit_rate: 0, catalogue_language: row.catalogue_language || 'en' };
+                current.eligible += Number(row.eligible || 0);
+                current.hits += Number(row.hits || 0);
+                current.misses += Number(row.misses || 0);
+                current.hit_rate = evaluationPct(current.hits, current.eligible);
+                languages.set(row.language, current);
+            }
+            targetRetrieval.by_language = Array.from(languages.values())
+                .sort((a, b) => b.eligible - a.eligible || String(a.language).localeCompare(String(b.language)));
+            targetRetrieval.language_mismatch_misses = targetRetrieval.by_language
+                .filter(row => !['en','unknown'].includes(String(row.language)))
+                .reduce((sum, row) => sum + Number(row.misses || 0), 0);
         }
-        targetRetrieval.by_language = Array.from(languages.values())
-            .sort((a, b) => b.eligible - a.eligible || String(a.language).localeCompare(String(b.language)));
-        targetRetrieval.language_mismatch_misses = targetRetrieval.by_language
-            .filter(row => !['en','unknown'].includes(String(row.language)))
-            .reduce((sum, row) => sum + Number(row.misses || 0), 0);
+
+        mergeRetrievalMetrics(aggregate.retrieval, batch.retrieval);
+        mergeRetrievalMetrics(aggregate.retrieval_lexical, batch.retrieval_lexical);
     }
 
     async function runEvaluationOnce(policy, runIndex, runTotal, label) {
@@ -617,6 +632,7 @@
         for (let run = 1; run <= runCount; run++) runs.push(await runEvaluationOnce(policy, run, runCount, label));
         const classificationRates = runs.map(row => Number(row.classification?.agreement_rate || 0));
         const retrievalRates = runs.map(row => Number(row.retrieval?.top4_hit_rate || 0));
+        const lexicalRetrievalRates = runs.map(row => Number(row.retrieval_lexical?.top4_hit_rate || 0));
         const errorCounts = runs.map(row => Number(row.classification?.total || 0) - Number(row.classification?.agreed || 0));
         return {
             policy,
@@ -625,20 +641,24 @@
             summary: {
                 classification_agreement: evaluationRange(classificationRates),
                 retrieval_top4_hit_rate: evaluationRange(retrievalRates),
+                retrieval_lexical_top4_hit_rate: evaluationRange(lexicalRetrievalRates),
                 classification_errors: evaluationRange(errorCounts),
             },
             retrieval_language: runs[0]?.retrieval?.by_language || [],
+            retrieval_lexical_language: runs[0]?.retrieval_lexical?.by_language || [],
         };
     }
 
     function benchmarkSummaryLines(report, title = 'Benchmark') {
         const classification = report.summary.classification_agreement;
         const retrieval = report.summary.retrieval_top4_hit_rate;
+        const lexical = report.summary.retrieval_lexical_top4_hit_rate;
         return [
             title,
             `  Classification agreement: ${classification.min}% / ${classification.mean}% / ${classification.max}% (min / mean / max)`,
-            `  Retrieval top-4: ${retrieval.min}% / ${retrieval.mean}% / ${retrieval.max}%`,
-        ];
+            `  Hybrid retrieval top-4: ${retrieval.min}% / ${retrieval.mean}% / ${retrieval.max}%`,
+            lexical ? `  Lexical baseline top-4: ${lexical.min}% / ${lexical.mean}% / ${lexical.max}%` : '',
+        ].filter(Boolean);
     }
 
     async function runBaselineEvaluation() {
@@ -674,7 +694,7 @@
             ].join('\n');
             copyButton.disabled = false;
             downloadButton.disabled = false;
-            setExportStatus(`3-run benchmark complete: classifier mean ${benchmark.summary.classification_agreement.mean}% · retrieval mean ${benchmark.summary.retrieval_top4_hit_rate.mean}%`, true);
+            setExportStatus(`3-run benchmark complete: classifier ${benchmark.summary.classification_agreement.mean}% · hybrid retrieval ${benchmark.summary.retrieval_top4_hit_rate.mean}% · lexical ${benchmark.summary.retrieval_lexical_top4_hit_rate.mean}%`, true);
         } catch (e) {
             resultBox.textContent = `Evaluation failed: ${e.message || String(e)}`;
             setExportStatus(e.message || String(e), false);
