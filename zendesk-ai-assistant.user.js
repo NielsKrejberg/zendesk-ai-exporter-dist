@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Zendesk AI Assistant
 // @namespace    https://github.com/NielsKrejberg/zendesk-ai-exporter
-// @version     0.10.14
+// @version     0.10.15
 // @description  Zendesk AI support assistant with built-in ticket search, export, Supabase KB upload, and versioned reference knowledge.
 // @author       Niels Krejberg
 // @homepageURL  https://github.com/NielsKrejberg/zendesk-ai-exporter
@@ -113,8 +113,8 @@
           </div>
           <div class="zaec-section zaec-evaluation-box">
             <strong>Baseline evaluation</strong>
-            <div class="zaec-help">Run the read-only benchmark against manually labelled tickets. The 3x benchmark reports min/mean/max. Status diagnostics rerun the same benchmark with pending issues excluded and with approved issues preferred. No classifications are changed.</div>
-            <div class="zaec-evaluation-actions"><button id="zaec-run-evaluation" class="zaec-primary">Run 3x benchmark</button><button id="zaec-run-diagnostics">Run status diagnostics</button><button id="zaec-copy-evaluation" disabled>Copy result</button><button id="zaec-download-evaluation" disabled>Download JSON</button></div>
+            <div class="zaec-help">Run the read-only development benchmark or the frozen blind held-out set. The 3x benchmark reports min/mean/max. No classifications or labels are changed.</div>
+            <div class="zaec-evaluation-actions"><button id="zaec-run-evaluation" class="zaec-primary">Run 3x benchmark</button><button id="zaec-run-heldout" class="zaec-primary">Run held-out benchmark</button><button id="zaec-run-diagnostics">Run status diagnostics</button><button id="zaec-copy-evaluation" disabled>Copy result</button><button id="zaec-download-evaluation" disabled>Download JSON</button></div>
             <div id="zaec-evaluation-result" class="zaec-evaluation-result"></div>
           </div>
           <div class="zaec-section"><label>Search terms / Zendesk query<textarea id="zaec-query" placeholder='Optional. Use | between alternatives, e.g. checkout error | payment failed | basket issue'></textarea></label><div class="zaec-help">Use | for multiple alternatives. Results are combined and duplicate tickets removed.</div></div>
@@ -161,6 +161,7 @@
     });
     $('#zaec-upload-reference').onclick = uploadReferencePackage;
     $('#zaec-run-evaluation').onclick = runBaselineEvaluation;
+    $('#zaec-run-heldout').onclick = runHeldoutEvaluation;
     $('#zaec-run-diagnostics').onclick = runEvaluationDiagnostics;
     $('#zaec-copy-evaluation').onclick = copyBaselineEvaluation;
     $('#zaec-download-evaluation').onclick = downloadBaselineEvaluation;
@@ -578,7 +579,7 @@
         mergeRetrievalMetrics(aggregate.retrieval_lexical, batch.retrieval_lexical);
     }
 
-    async function runEvaluationOnce(policy, runIndex, runTotal, label) {
+    async function runEvaluationOnce(policy, runIndex, runTotal, label, heldoutSetKey = '') {
         const resultBox = $('#zaec-evaluation-result');
         const aggregate = createEvaluationAggregate(policy);
         let offset = 0;
@@ -599,6 +600,7 @@
                 offset,
                 batch_size: 4,
                 selection_policy: policy,
+                ...(heldoutSetKey ? { heldout_set_key: heldoutSetKey } : {}),
             }, 90000);
 
             if (batch.preparing) {
@@ -627,9 +629,9 @@
         return aggregate;
     }
 
-    async function runEvaluationSet(policy, runCount = 3, label = 'Benchmark') {
+    async function runEvaluationSet(policy, runCount = 3, label = 'Benchmark', heldoutSetKey = '') {
         const runs = [];
-        for (let run = 1; run <= runCount; run++) runs.push(await runEvaluationOnce(policy, run, runCount, label));
+        for (let run = 1; run <= runCount; run++) runs.push(await runEvaluationOnce(policy, run, runCount, label, heldoutSetKey));
         const classificationRates = runs.map(row => Number(row.classification?.agreement_rate || 0));
         const retrievalRates = runs.map(row => Number(row.retrieval?.top4_hit_rate || 0));
         const lexicalRetrievalRates = runs.map(row => Number(row.retrieval_lexical?.top4_hit_rate || 0));
@@ -667,11 +669,13 @@
         state.lastEvaluation = null;
         const runButton = $('#zaec-run-evaluation');
         const diagnosticButton = $('#zaec-run-diagnostics');
+        const heldoutButton = $('#zaec-run-heldout');
         const copyButton = $('#zaec-copy-evaluation');
         const downloadButton = $('#zaec-download-evaluation');
         const resultBox = $('#zaec-evaluation-result');
         runButton.disabled = true;
         diagnosticButton.disabled = true;
+        heldoutButton.disabled = true;
         copyButton.disabled = true;
         downloadButton.disabled = true;
         resultBox.style.display = 'block';
@@ -701,6 +705,51 @@
         } finally {
             state.busy = false;
             runButton.disabled = state.exportRunning;
+            heldoutButton.disabled = state.exportRunning;
+            diagnosticButton.disabled = state.exportRunning;
+        }
+    }
+
+    async function runHeldoutEvaluation() {
+        if (state.busy || state.exportRunning) return;
+        state.busy = true;
+        state.lastEvaluation = null;
+        const runButton = $('#zaec-run-evaluation');
+        const heldoutButton = $('#zaec-run-heldout');
+        const diagnosticButton = $('#zaec-run-diagnostics');
+        const copyButton = $('#zaec-copy-evaluation');
+        const downloadButton = $('#zaec-download-evaluation');
+        const resultBox = $('#zaec-evaluation-result');
+        runButton.disabled = true;
+        heldoutButton.disabled = true;
+        diagnosticButton.disabled = true;
+        copyButton.disabled = true;
+        downloadButton.disabled = true;
+        resultBox.style.display = 'block';
+
+        try {
+            const benchmark = await runEvaluationSet('standard', 3, 'Held-out benchmark', 'heldout-2026-09-v1');
+            state.lastEvaluation = {
+                ok: true,
+                type: 'heldout_three_run_benchmark',
+                heldout_set_key: 'heldout-2026-09-v1',
+                benchmark,
+            };
+            resultBox.textContent = [
+                ...benchmarkSummaryLines(benchmark, '3-run held-out benchmark'),
+                '',
+                'Frozen blind labels: heldout-2026-09-v1',
+            ].join('\n');
+            copyButton.disabled = false;
+            downloadButton.disabled = false;
+            setExportStatus(`Held-out benchmark complete: classifier ${benchmark.summary.classification_agreement.mean}% · hybrid retrieval ${benchmark.summary.retrieval_top4_hit_rate.mean}% · lexical ${benchmark.summary.retrieval_lexical_top4_hit_rate.mean}%`, true);
+        } catch (e) {
+            resultBox.textContent = `Held-out evaluation failed: ${e.message || String(e)}`;
+            setExportStatus(e.message || String(e), false);
+        } finally {
+            state.busy = false;
+            runButton.disabled = state.exportRunning;
+            heldoutButton.disabled = state.exportRunning;
             diagnosticButton.disabled = state.exportRunning;
         }
     }
@@ -711,11 +760,13 @@
         state.lastEvaluation = null;
         const runButton = $('#zaec-run-evaluation');
         const diagnosticButton = $('#zaec-run-diagnostics');
+        const heldoutButton = $('#zaec-run-heldout');
         const copyButton = $('#zaec-copy-evaluation');
         const downloadButton = $('#zaec-download-evaluation');
         const resultBox = $('#zaec-evaluation-result');
         runButton.disabled = true;
         diagnosticButton.disabled = true;
+        heldoutButton.disabled = true;
         copyButton.disabled = true;
         downloadButton.disabled = true;
         resultBox.style.display = 'block';
@@ -770,6 +821,7 @@
             state.busy = false;
             runButton.disabled = state.exportRunning;
             diagnosticButton.disabled = state.exportRunning;
+            heldoutButton.disabled = state.exportRunning;
         }
     }
 
@@ -1158,7 +1210,7 @@
     function selectNone(){state.selectedTicketIds.clear();panel.querySelectorAll('.zaec-row-check').forEach(c=>c.checked=false);updateSelectionUi()}
     function getSelectedTickets(){return state.tickets.filter(t=>state.selectedTicketIds.has(t.id))}
     function updateSelectionUi(){const has=state.tickets.length>0,sel=state.selectedTicketIds.size;$('#zaec-load-comments').disabled=!sel||state.exportRunning;$('#zaec-upload-cloud').disabled=!sel||state.exportRunning;$('#zaec-export-jsonl').disabled=!sel||state.exportRunning;$('#zaec-export-csv').disabled=!sel||state.exportRunning;$('#zaec-select-all').disabled=!has||state.exportRunning;$('#zaec-select-none').disabled=!has||state.exportRunning;$('#zaec-check-all').disabled=!has||state.exportRunning;$('#zaec-check-all').checked=has&&sel===state.tickets.length;$('#zaec-upload-cloud').textContent=sel?`Upload selected (${sel}) to KB`:'Upload selected to KB'}
-    function setExportRunningUi(r){$('#zaec-find').disabled=r;$('#zaec-cancel').disabled=!r;$('#zaec-upload-reference').disabled=r||state.busy;$('#zaec-run-evaluation').disabled=r||state.busy;$('#zaec-run-diagnostics').disabled=r||state.busy;updateSelectionUi()}
+    function setExportRunningUi(r){$('#zaec-find').disabled=r;$('#zaec-cancel').disabled=!r;$('#zaec-upload-reference').disabled=r||state.busy;$('#zaec-run-evaluation').disabled=r||state.busy;$('#zaec-run-heldout').disabled=r||state.busy;$('#zaec-run-diagnostics').disabled=r||state.busy;updateSelectionUi()}
 
     function exportJsonl(tickets){downloadBlob(tickets.map(t=>JSON.stringify(t)).join('\n'),`zendesk-tickets-${dateStamp()}.jsonl`,'application/x-ndjson;charset=utf-8')}
     function exportCsv(tickets){const h=['id','created_at','updated_at','solved_at','status','subject','group_id','group_name','assignee_id','priority','type','tags','conversation_loaded','conversation_count','url'],rows=[h.map(csvCell).join(',')];for(const t of tickets){const v={...t,tags:(t.tags||[]).join(' | '),conversation_count:Array.isArray(t.conversation)?t.conversation.length:''};rows.push(h.map(k=>csvCell(v[k])).join(','))}downloadBlob(rows.join('\n'),`zendesk-tickets-${dateStamp()}.csv`,'text/csv;charset=utf-8')}
